@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% set title = "Инструкция — Kilogr.app" %}
+
+{% block content %}
+<style>
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* 1. Контейнер для "слайдов" (прилипания)
+  */
+  .snap-container {
+    scroll-snap-type: y mandatory;
+    overflow-y: scroll;
+
+    /* Высота контейнера = 100% высоты окна МИНУС высота вашего хедера.
+      (py-3 + лого h-10/11 + полоска h-0.5 = ~66px)
+    */
+    height: calc(100vh - 66px);
+  }
+
+  /* 2. Каждый "слайд"
+  */
+  .snap-slide {
+    scroll-snap-align: start;
+    /* Слайды занимают всю высоту контейнера */
+    height: calc(100vh - 66px);
+
+    /* Стили для центрирования контента */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    position: relative; /* Для иконки "вниз" */
+  }
+
+  /* Карточка для контента */
+  .card {
+    @apply border border-slate-200/80 rounded-xl bg-white/90 shadow-lg backdrop-blur-sm;
+  }
+
+  /* Стили для аккордеона (с фиксом "просвечивания") */
+  .acc-item[aria-expanded="true"] .acc-panel {
+    max-height: 12rem; /* 192px */
+  }
+  .acc-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s ease-out;
+  }
+</style>
+
+<div class="snap-container">
+
+  <section class="snap-slide text-center bg-gradient-to-br from-white to-indigo-50" id="top">
+    <div class="max-w-2xl">
+      <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight">
+        Добро пожаловать в Kilogr.app
+      </h1>
+      <p class="mt-4 text-lg text-slate-600">
+        Ваш персональный AI-ассистент для анализа питания, визуализации цели и достижения результата.
+      </p>
+
+      <div class="absolute bottom-12 left-1/2 -translate-x-1/2 text-slate-400 animate-bounce">
+        <i class="bi bi-chevron-down text-3xl"></i>
+      </div>
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-bl from-white to-emerald-50" id="step-1">
+    <div class="w-full max-w-5xl grid lg:grid-cols-2 gap-10 items-center">
+      <div class="max-w-md">
+        <span class="font-bold text-indigo-600">Шаг 1</span>
+        <h2 class="mt-2 text-3xl font-bold">Анализируйте приёмы пищи</h2>
+        <p class="mt-3 text-slate-600">
+          Забудьте о ручном подсчете. Просто сфотографируйте еду в <a href="{{ url_for('profile') }}" class="font-medium text-indigo-600 hover:text-indigo-800">Профиле</a> — наш AI распознает блюдо, рассчитает калории и БЖУ.
+        </p>
+        <p class="mt-2 text-sm text-slate-500">
+          Вы также можете добавить приём пищи <a href="{{ url_for('add_meal') }}" class="font-medium hover:text-indigo-700">вручную</a> или через <a href="#faq" class="font-medium hover:text-indigo-700">Telegram-бота</a>.
+        </p>
+      </div>
+
+      <div class="card p-5">
+        <div class="grid grid-cols-[80px,1fr] gap-4">
+          <div class="rounded-lg border bg-gradient-to-br from-slate-50 to-slate-100 aspect-square flex items-center justify-center text-3xl">🍳</div>
+          <div>
+            <div class="font-medium">Омлет с овощами</div>
+            <div class="mt-1 text-xs text-slate-500">Распознано автоматически</div>
+            <div class="mt-3 grid grid-cols-4 gap-2 text-center">
+              <div class="rounded-lg border p-2"><div class="text-xs text-slate-500">ккал</div><div class="font-semibold">412</div></div>
+              <div class="rounded-lg border p-2"><div class="text-xs text-slate-500">Белки</div><div class="font-semibold">24 г</div></div>
+              <div class="rounded-lg border p-2"><div class="text-xs text-slate-500">Жиры</div><div class="font-semibold">21 г</div></div>
+              <div class="rounded-lg border p-2"><div class="text-xs text-slate-500">Углев.</div><div class="font-semibold">29 г</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-br from-white to-sky-50" id="step-2">
+    <div class="w-full max-w-5xl grid lg:grid-cols-2 gap-10 items-center">
+
+      <div class="flex justify-center gap-12 lg:gap-16">
+        <div class="text-center">
+          <img src="{{ url_for('static', filename='devices/watch.png') }}" alt="Smart Watch" class="h-24 lg:h-28 mx-auto">
+          <p class="mt-3 text-lg font-semibold text-slate-700">Фитнес-часы</p>
+          <p class="text-sm text-slate-500">Шаги и активность</p>
+        </div>
+        <div class="text-center">
+          <img src="{{ url_for('static', filename='devices/scales.png') }}" alt="Smart Scales" class="h-24 lg:h-28 mx-auto">
+          <p class="mt-3 text-lg font-semibold text-slate-700">Смарт-весы</p>
+          <p class="text-sm text-slate-500">Вес и % жира</p>
+        </div>
+      </div>
+
+      <div class="max-w-md">
+        <span class="font-bold text-indigo-600">Шаг 2</span>
+        <h2 class="mt-2 text-3xl font-bold">Подключите устройства</h2>
+        <p class="mt-3 text-slate-600">
+          Автоматизируйте сбор данных. Перейдите в
+          <a href="{{ url_for('devices') }}" class="font-medium text-indigo-600 hover:text-indigo-800">«Устройства»</a>
+          и подключите Apple Health или Google Fit для синхронизации.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-bl from-white to-amber-50" id="step-3">
+    <div class="w-full max-w-5xl grid lg:grid-cols-2 gap-10 items-center">
+      <div class="max-w-md">
+        <span class="font-bold text-indigo-600">Шаг 3</span>
+        <h2 class="mt-2 text-3xl font-bold">✨ Увидьте свою цель</h2>
+        <p class="mt-3 text-slate-600">
+          Лучшая мотивация — увидеть результат. На основе вашей аватарки, ваших показателей и целей наш AI сгенерирует, как вы будете выглядеть, достигнув желаемого веса.
+        </p>
+        <a href="{{ url_for('visualize') }}" class="inline-flex items-center gap-2 mt-4 px-5 py-2.5 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition">
+          Попробовать AI-визуализацию
+        </a>
+      </div>
+
+      <div class="card p-5 w-full">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="text-center">
+            <div class="aspect-[3/4] rounded-lg bg-slate-100 border flex items-center justify-center">
+              <i class="bi bi-person text-6xl text-slate-400"></i>
+            </div>
+            <h4 class="mt-2 font-semibold">Ваше фото</h4>
+            <p class="text-sm text-slate-500">Текущая форма</p>
+          </div>
+          <div class="text-center">
+            <div class="aspect-[3/4] rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+              <i class="bi bi-person-check text-6xl text-emerald-500"></i>
+            </div>
+            <h4 class="mt-2 font-semibold text-emerald-700">Ваша цель</h4>
+            <p class="text-sm text-slate-500">AI-визуализация</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-br from-white to-rose-50" id="step-4">
+    <div class="w-full max-w-5xl grid lg:grid-cols-2 gap-10 items-center">
+
+      <div class="card p-5 w-full">
+        <h4 class="font-semibold text-lg text-center">Пример: План на завтра</h4>
+        <ul class="mt-4 space-y-3">
+          <li class="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border">
+            <span class="text-xl">🥞</span>
+            <div>
+              <div class="font-medium">Завтрак</div>
+              <div class="text-sm text-slate-500">Овсяная каша с ягодами и орехами</div>
+            </div>
+          </li>
+          <li class="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border">
+            <span class="text-xl">🥗</span>
+            <div>
+              <div class="font-medium">Обед</div>
+              <div class="text-sm text-slate-500">Куриная грудка на гриле с киноа</div>
+            </div>
+          </li>
+          <li class="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border">
+            <span class="text-xl">🐟</span>
+            <div>
+              <div class="font-medium">Ужин</div>
+              <div class="text-sm text-slate-500">Запеченный лосось со спаржей</div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="max-w-md">
+        <span class="font-bold text-indigo-600">Шаг 4</span>
+        <h2 class="mt-2 text-3xl font-bold">🤖 Получите AI-диету</h2>
+        <p class="mt-3 text-slate-600">
+          Не знаете, с чего начать? Наш ассистент сгенерирует для вас персональный план питания на основе ваших целей и предпочтений.
+        </p>
+
+      </div>
+
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-bl from-white to-fuchsia-50" id="step-5">
+    <div class="w-full max-w-5xl grid lg:grid-cols-2 gap-10 items-center">
+      <div class="max-w-md">
+        <span class="font-bold text-indigo-600">Шаг 5</span>
+        <h2 class="mt-2 text-3xl font-bold">Следите за прогрессом</h2>
+        <p class="mt-3 text-slate-600">
+          Все данные — еда, активность и замеры веса — собираются в вашем «Профиле». Наблюдайте за трендами на понятных графиках и достигайте цели.
+        </p>
+        <a href="{{ url_for('profile') }}" class="inline-flex items-center gap-2 mt-4 px-5 py-2.5 rounded-lg bg-slate-800 text-white font-medium hover:bg-slate-900 transition">
+          Перейти в мой Профиль
+        </a>
+      </div>
+
+      <div class="card p-5 w-full">
+        <h3 class="font-semibold">Ваш прогресс по цели</h3>
+        <div class="mt-4">
+          <div class="flex items-center justify-between text-sm text-slate-500">
+            <span>Старт</span>
+            <span>Цель</span>
+          </div>
+          <div class="mt-1 h-4 w-full rounded-full bg-slate-100 border border-slate-200 relative overflow-hidden">
+            <div class="h-full bg-gradient-to-r from-emerald-500 to-emerald-400" style="width: 62%"></div>
+            <span class="absolute -top-8 left-[62%] -translate-x-1/2 text-sm px-2.5 py-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 shadow-lg">
+              62%
+            </span>
+          </div>
+          <div class="mt-4 text-sm text-slate-600">
+            Осталось ~ <span class="font-bold text-slate-900">3.8 кг</span> до цели
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="snap-slide bg-gradient-to-br from-white to-slate-50" id="faq" x-data="{open:null}">
+    <div class="w-full max-w-2xl">
+      <h2 class="text-3xl font-bold text-center">Частые вопросы</h2>
+
+      <div class="mt-8 space-y-3">
+
+        <div class="card acc-item" :aria-expanded="open===1" @click="open===1?open=null:open=1">
+          <button class="w-full px-5 py-4 text-left flex items-center justify-between">
+            <span class="font-medium">Что такое Telegram-бот?</span>
+            <i class="bi" :class="open===1?'bi-chevron-up':'bi-chevron-down'"></i>
+          </button>
+          <div class="acc-panel">
+            <div class="px-5 pt-1 pb-4 text-slate-600">
+              Это ваш ассистент прямо в Telegram. Вы можете отправлять ему фото еды, и они автоматически появятся в вашем профиле на сайте.
+            </div>
+          </div>
+        </div>
+
+        <div class="card acc-item" :aria-expanded="open===2" @click="open===2?open=null:open=2">
+          <button class="w-full px-5 py-4 text-left flex items-center justify-between">
+            <span class="font-medium">Когда лучше взвешиваться?</span>
+            <i class="bi" :class="open===2?'bi-chevron-up':'bi-chevron-down'"></i>
+          </button>
+          <div class="acc-panel">
+            <div class="px-5 pt-1 pb-4 text-slate-600">
+              Утром натощак, после туалета, на твёрдой поверхности. Это обеспечит наиболее точные данные для отслеживания тренда.
+            </div>
+          </div>
+        </div>
+
+        <div class="card acc-item" :aria-expanded="open===3" @click="open===3?open=null:open=3">
+          <button class="w-full px-5 py-4 text-left flex items-center justify-between">
+            <span class="font-medium">Почему AI-анализ фото занимает время?</span>
+            <i class="bi" :class="open===3?'bi-chevron-up':'bi-chevron-down'"></i>
+          </button>
+          <div class="acc-panel">
+            <div class="px-5 pt-1 pb-4 text-slate-600">
+              Модель AI анализирует состав блюда, оценивает объемы и ищет нутриенты в базе. Обычно это занимает 15-30 секунд, но дает точный результат без ручного ввода.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div> {% endblock %}

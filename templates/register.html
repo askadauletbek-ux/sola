@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Регистрация | Kilogr.app</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#1E40AF', // Darker Blue
+            accent: '#2563EB',
+            light: '#F9FAFB',  // Lighter gray
+            dark: '#111827',
+          },
+          fontFamily: {
+            sans: ['"Inter"', 'sans-serif'],
+          },
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fade-in { animation: fadeIn 0.6s ease-out forwards; }
+
+    .aurora-background { position: relative; overflow: hidden; }
+    .aurora-background::before, .aurora-background::after {
+      content: ''; position: absolute; z-index: 0; filter: blur(100px);
+    }
+    .aurora-background::before {
+      top: -20%; left: -20%; width: 400px; height: 400px;
+      background-image: radial-gradient(circle, rgba(59, 130, 246, 0.2), transparent 70%);
+      animation: drift 15s infinite alternate ease-in-out;
+    }
+    .aurora-background::after {
+      bottom: -20%; right: -20%; width: 400px; height: 400px;
+      background-image: radial-gradient(circle, rgba(30, 64, 175, 0.2), transparent 70%);
+      animation: drift 20s infinite alternate-reverse ease-in-out;
+    }
+    @keyframes drift { from { transform: translate(0, 0); } to { transform: translate(50px, 80px); } }
+
+    /* Стили для валидации */
+    .input-error { border-color: #EF4444 !important; }
+    .step-panel { transition: opacity 0.3s ease-out, transform 0.3s ease-out; }
+    .step-panel.hidden { opacity: 0; transform: translateX(20px); pointer-events: none; position: absolute; top: 0; left: 0; width: 100%; }
+
+    /* Карточки выбора */
+    .selection-card {
+        border: 2px solid #e5e7eb; transition: all 0.2s ease;
+    }
+    .selection-card.selected {
+        border-color: #2563EB; background-color: #eff6ff;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    }
+
+    #avatar-recommendation-block {
+        transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+        transition-delay: 0.1s;
+    }
+  </style>
+</head>
+<body class="bg-light min-h-screen flex items-center justify-center font-sans p-4 aurora-background">
+
+<div class="relative z-10 w-full max-w-5xl grid md:grid-cols-2 bg-white/70 backdrop-blur-xl border border-gray-200 shadow-2xl rounded-3xl overflow-hidden animate-fade-in">
+
+  <div class="hidden md:flex flex-col justify-center p-12 bg-gray-50/50">
+    <div id="left-panel-content">
+        <div class="flex items-center gap-3">
+          <img
+            src="{{ url_for('static', filename='logo.png') }}"
+            alt="Kilogr.app"
+            class="h-10 md:h-12 w-auto object-contain"
+            loading="lazy"
+          />
+        </div>
+        <h2 class="text-3xl font-bold text-dark mt-8">Ваш личный путь к здоровью</h2>
+        <p class="text-gray-600 mt-4">Отслеживайте свой прогресс, достигайте целей и становитесь лучшей версией себя вместе с нами.</p>
+    </div>
+
+    <div id="avatar-recommendation-block" class="hidden opacity-0 transform translate-y-4">
+        <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-6 flex flex-col items-center text-center">
+            <div class="text-indigo-500 text-5xl">💡</div>
+            <h4 class="font-bold text-indigo-800 text-lg mt-4">Загрузите фото вашего лица</h4>
+            <p class="text-sm text-indigo-700 mt-2">
+                Это позволит нашему ИИ создавать персональные визуализации вашего прогресса — вы сможете увидеть, как будет меняться ваше тело.
+            </p>
+             <img src="{{ url_for('static', filename='uploads/visualizations/29/visuals/29/20250925/1758793562_target.png') }}" alt="AI Visualization" class="mt-4 rounded-lg shadow-md w-3/4">
+        </div>
+    </div>
+  </div>
+
+  <div class="w-full p-8 sm:p-10 flex flex-col justify-center">
+    <div class="text-center mb-6" style="margin-top:100px">
+      <h1 id="form-title" class="text-2xl font-bold text-dark">Создание аккаунта</h1>
+    </div>
+
+    <div class="flex items-center justify-center gap-2 mb-8">
+        <div id="progress-1" class="h-2 flex-1 rounded-full bg-accent transition-colors"></div>
+        <div id="progress-2" class="h-2 flex-1 rounded-full bg-gray-200 transition-colors"></div>
+        <div id="progress-3" class="h-2 flex-1 rounded-full bg-gray-200 transition-colors"></div>
+    </div>
+
+    <form id="registerForm" action="{{ url_for('register') }}" method="POST" enctype="multipart/form-data" class="relative min-h-[420px]">
+      <div id="error-container" class="text-red-600 text-sm mb-4 hidden font-medium p-3 bg-red-50 border border-red-200 rounded-lg"></div>
+
+      <div id="step-1" class="step-panel space-y-4">
+          <div>
+            <label for="name" class="sr-only">Имя</label>
+            <input id="name" type="text" name="name" placeholder="Ваше имя" class="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent" required>
+          </div>
+          <div>
+            <label for="email" class="sr-only">Email</label>
+            <input id="email" type="email" name="email" placeholder="you@example.com" class="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent" required>
+          </div>
+          <div>
+            <label for="password" class="sr-only">Пароль</label>
+            <input id="password" type="password" name="password" placeholder="Пароль (мин. 6 символов)" class="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent" required minlength="6">
+          </div>
+          <div>
+            <label for="password_confirm" class="sr-only">Подтвердите пароль</label>
+            <input id="password_confirm" type="password" name="password_confirm" placeholder="Подтвердите пароль" class="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent" required>
+          </div>
+          <button type="button" id="next-1" class="w-full bg-primary text-white py-3 rounded-xl font-medium text-lg transition-all duration-300 hover:bg-accent hover:shadow-lg">Далее</button>
+      </div>
+
+      <div id="step-2" class="step-panel hidden space-y-4">
+           <div>
+            <label for="date_of_birth" class="sr-only">Дата рождения</label>
+            <input id="date_of_birth" type="text" onfocus="(this.type='date')" onblur="if(!this.value)this.type='text'" name="date_of_birth" placeholder="Дата рождения" class="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent" required>
+          </div>
+
+          <div>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="selection-card flex flex-col items-center justify-center p-4 cursor-pointer" data-group="sex" data-value="male">
+                <input type="radio" name="sex" value="male" class="sr-only" required>
+                <span class="text-4xl">👨</span>
+                <span class="font-semibold mt-2">Мужской</span>
+              </label>
+              <label class="selection-card flex flex-col items-center justify-center p-4 cursor-pointer" data-group="sex" data-value="female">
+                <input type="radio" name="sex" value="female" class="sr-only" required>
+                <span class="text-4xl">👩</span>
+                <span class="font-semibold mt-2">Женский</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+              <label for="avatar" class="block text-sm font-medium text-gray-700 mb-2">Ваш аватар</label>
+              <div class="flex items-center gap-4">
+                  <div class="flex-shrink-0 w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden border-2 border-dashed">
+                      <img id="avatar-preview" src="{{ url_for('static', filename='uploads/i.webp') }}" alt="Preview" class="w-full h-full object-cover">
+                  </div>
+                  <label for="avatar" class="cursor-pointer w-full text-center px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 hover:bg-gray-100 transition-colors">
+                      <span class="text-sm font-semibold text-gray-700">Выберите фото...</span>
+                      <input id="avatar" type="file" name="avatar" accept="image/*" class="sr-only">
+                  </label>
+              </div>
+          </div>
+          <div class="flex gap-3">
+            <button type="button" id="back-1" class="w-1/3 bg-gray-200 text-gray-700 py-3 rounded-xl font-medium transition hover:bg-gray-300">Назад</button>
+            <button type="button" id="next-2" class="w-2/3 bg-primary text-white py-3 rounded-xl font-medium text-lg transition hover:bg-accent">Далее</button>
+          </div>
+      </div>
+
+      <div id="step-3" class="step-panel hidden space-y-5">
+           <div class="flex items-start gap-3 p-4 bg-blue-50/50 border border-blue-200 rounded-xl">
+            <input id="face_consent" name="face_consent" type="checkbox" value="true" class="mt-1 h-5 w-5 rounded border-gray-300 text-accent focus:ring-accent">
+            <label for="face_consent" class="text-sm text-gray-800">
+              <span class="font-semibold">Даю согласие на использование аватара</span> для генерации AI-визуализаций моего телосложения (данные не передаются третьим лицам).
+            </label>
+          </div>
+          <div class="flex items-center gap-2">
+            <input id="terms" name="terms" type="checkbox" required class="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent">
+            <label for="terms" class="text-sm text-gray-700">Я согласен с <a href="#" class="text-accent hover:underline">Условиями использования</a></label>
+          </div>
+          <div class="flex gap-3">
+            <button type="button" id="back-2" class="w-1/3 bg-gray-200 text-gray-700 py-3 rounded-xl font-medium transition hover:bg-gray-300">Назад</button>
+            <button type="submit" class="w-2/3 bg-primary text-white py-3 rounded-xl font-medium text-lg transition-all duration-300 hover:bg-accent hover:shadow-lg">Создать аккаунт</button>
+          </div>
+      </div>
+    </form>
+
+    <p class="mt-8 text-center text-sm text-gray-500">
+      Уже есть аккаунт?
+      <a href="{{ url_for('login') }}" class="font-medium text-accent hover:underline">Войти</a>
+    </p>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('registerForm');
+    const formTitle = document.getElementById('form-title');
+    const errorContainer = document.getElementById('error-container');
+
+    const steps = [document.getElementById('step-1'), document.getElementById('step-2'), document.getElementById('step-3')];
+    const progressBars = [document.getElementById('progress-1'), document.getElementById('progress-2'), document.getElementById('progress-3')];
+
+    const nextBtns = [document.getElementById('next-1'), document.getElementById('next-2')];
+    const backBtns = [document.getElementById('back-1'), document.getElementById('back-2')];
+
+    const avatarInput = document.getElementById('avatar');
+    const avatarPreview = document.getElementById('avatar-preview');
+
+    // Новые элементы для управления боковой панелью
+    const leftPanelContent = document.getElementById('left-panel-content');
+    const avatarRecommendationBlock = document.getElementById('avatar-recommendation-block');
+
+    let currentStep = 0;
+    const stepTitles = ["Создание аккаунта", "Личные данные", "Завершение"];
+
+    const goToStep = (stepIndex) => {
+        steps.forEach((step, index) => {
+            step.classList.toggle('hidden', index !== stepIndex);
+        });
+        progressBars.forEach((bar, index) => {
+            bar.classList.toggle('bg-accent', index <= stepIndex);
+            bar.classList.toggle('bg-gray-200', index > stepIndex);
+        });
+        formTitle.textContent = stepTitles[stepIndex];
+        currentStep = stepIndex;
+
+        // --- ЛОГИКА ОТОБРАЖЕНИЯ БОКОВОЙ ПАНЕЛИ ---
+        const isSecondStep = stepIndex === 1;
+        leftPanelContent.classList.toggle('hidden', isSecondStep);
+        avatarRecommendationBlock.classList.toggle('hidden', !isSecondStep);
+
+        // Плавное появление блока рекомендации
+        if (isSecondStep) {
+            setTimeout(() => {
+                avatarRecommendationBlock.classList.remove('opacity-0', 'translate-y-4');
+            }, 50);
+        } else {
+            avatarRecommendationBlock.classList.add('opacity-0', 'translate-y-4');
+        }
+    };
+
+    const showError = (message) => {
+        errorContainer.textContent = message;
+        errorContainer.classList.remove('hidden');
+    };
+
+    const clearErrors = () => {
+        errorContainer.classList.add('hidden');
+        form.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+    };
+
+    const validateStep = async (stepIndex) => {
+        clearErrors();
+        const inputs = steps[stepIndex].querySelectorAll('input[required]');
+        let isValid = true;
+
+        for (const input of inputs) {
+            if (!input.checkValidity()) {
+                input.classList.add('input-error');
+                isValid = false;
+            }
+        }
+
+        if (stepIndex === 0) {
+            const password = document.getElementById('password');
+            const passwordConfirm = document.getElementById('password_confirm');
+            const emailInput = document.getElementById('email');
+
+            if (password.value !== passwordConfirm.value) {
+                showError('Пароли не совпадают.');
+                password.classList.add('input-error');
+                passwordConfirm.classList.add('input-error');
+                isValid = false;
+            } else if (password.value.length < 6) {
+                showError('Пароль должен быть не менее 6 символов.');
+                password.classList.add('input-error');
+                isValid = false;
+            }
+
+            if (isValid && emailInput.checkValidity()) {
+                try {
+                    const response = await fetch('/api/check_email', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ email: emailInput.value })
+                    });
+                    const data = await response.json();
+                    if (data.exists) {
+                        showError('Этот email уже зарегистрирован.');
+                        emailInput.classList.add('input-error');
+                        isValid = false;
+                    }
+                } catch (err) {
+                    showError('Не удалось проверить email. Попробуйте позже.');
+                    isValid = false;
+                }
+            } else if (!emailInput.checkValidity()) {
+                 showError('Пожалуйста, введите корректный email.');
+                 isValid = false;
+            }
+        }
+
+        if (stepIndex === 1) {
+            if (!form.querySelector('input[name="sex"]:checked')) {
+                showError('Пожалуйста, выберите ваш пол.');
+                isValid = false;
+            }
+             const dob = document.getElementById('date_of_birth');
+             if (!dob.value) {
+                showError('Пожалуйста, укажите дату рождения.');
+                dob.classList.add('input-error');
+                isValid = false;
+             }
+        }
+
+        if(stepIndex === 2) {
+             const terms = document.getElementById('terms');
+             if (!terms.checked) {
+                showError('Необходимо согласиться с Условиями использования.');
+                isValid = false;
+             }
+        }
+
+        return isValid;
+    };
+
+    nextBtns.forEach((btn, index) => {
+        btn.addEventListener('click', async () => {
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>';
+            btn.disabled = true;
+
+            const isValid = await validateStep(index);
+            if (isValid) {
+                goToStep(index + 1);
+            }
+
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        });
+    });
+
+    backBtns.forEach((btn, index) => {
+        btn.addEventListener('click', () => { goToStep(index); });
+    });
+
+    avatarInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) { avatarPreview.src = e.target.result; }
+            reader.readAsDataURL(file);
+        }
+    });
+
+    document.querySelectorAll('.selection-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const group = card.dataset.group;
+            document.querySelectorAll(`.selection-card[data-group="${group}"]`).forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            card.querySelector('input[type="radio"]').checked = true;
+        });
+    });
+
+    form.addEventListener('submit', async function (e) {
+        const submitBtn = e.submitter;
+        e.preventDefault();
+
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>';
+        submitBtn.disabled = true;
+
+        const isValid = await validateStep(currentStep);
+        if (isValid) {
+            form.submit();
+        } else {
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+        }
+    });
+
+    goToStep(0);
+});
+</script>
+
+</body>
+</html>

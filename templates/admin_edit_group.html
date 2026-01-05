@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-xl mx-auto px-4 py-6">
+    <h1 class="text-3xl font-bold mb-6">Редактировать группу: {{ group.name }} (ID: {{ group.id }})</h1>
+
+    <div class="flex items-center space-x-4 mb-6">
+        <a href="{{ url_for('admin_groups_list') }}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            ← Назад к списку групп
+        </a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="bg-{{ category }}-100 border border-{{ category }}-400 text-{{ category }}-700 px-4 py-3 rounded relative mb-4" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="bg-white shadow-md rounded-lg p-6">
+        <form action="{{ url_for('admin_edit_group', group_id=group.id) }}" method="POST" class="space-y-4">
+            <div>
+                <label for="name" class="block text-sm font-medium text-gray-700">Название группы</label>
+                <input type="text" id="name" name="name" value="{{ group.name }}" required
+                       class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            </div>
+            <div>
+                <label for="description" class="block text-sm font-medium text-gray-700">Описание / Девиз</label>
+                <textarea id="description" name="description" rows="3"
+                          class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">{{ group.description or '' }}</textarea>
+            </div>
+            <div>
+                <label for="trainer_id" class="block text-sm font-medium text-gray-700">Тренер группы</label>
+                <select id="trainer_id" name="trainer_id"
+                        class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                    <option value="">-- Выберите тренера --</option>
+                    {% for trainer in trainers %}
+                        <option value="{{ trainer.id }}" {% if trainer.id == group.trainer_id %}selected{% endif %}>
+                            {{ trainer.name }} ({{ trainer.email }})
+                        </option>
+                    {% endfor %}
+                </select>
+                {% if not group.trainer %}
+                    <p class="mt-1 text-xs text-red-500">Внимание: У этой группы нет назначенного тренера!</p>
+                {% endif %}
+            </div>
+            <div class="flex justify-end space-x-3">
+                <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Сохранить изменения
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+{% set title = group.name ~ " — Командный центр" %}
+
+{% block content %}
+<style>
+  /* Анимации */
+  .fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Карточки */
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden; }
+
+  /* Хедер с градиентом */
+  .header-bg {
+    background: linear-gradient(120deg, #4f46e5 0%, #3b82f6 100%);
+    color: white;
+  }
+
+  /* Лидерборд */
+  .leaderboard-row { transition: all 0.2s; border-bottom: 1px solid #f1f5f9; }
+  .leaderboard-row:last-child { border-bottom: none; }
+  .leaderboard-row:hover { background-color: #f8fafc; }
+
+  .rank-badge { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 13px; font-weight: 800; border: 2px solid #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+  .rank-1 { background: #FEF3C7; color: #D97706; }
+  .rank-2 { background: #F3F4F6; color: #4B5563; }
+  .rank-3 { background: #FFEDD5; color: #C2410C; }
+  .rank-N { background: #F1F5F9; color: #64748B; }
+
+  /* Лента */
+  .feed-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #f3f4f6; }
+  .comment-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+  .post-img { max-height: 500px; width: 100%; object-fit: cover; border-radius: 16px; margin-top: 12px; border: 1px solid #e5e7eb; cursor: zoom-in; }
+
+  /* Удаление (для тренера) */
+  .delete-btn { opacity: 0; transition: opacity 0.2s; }
+  .hover-trigger:hover .delete-btn { opacity: 1; }
+</style>
+
+<div class="max-w-5xl mx-auto px-4 py-8 space-y-8">
+
+  {# --- 1. ШАПКА ГРУППЫ --- #}
+  <div class="card header-bg p-8 relative overflow-hidden shadow-xl">
+    <div class="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-white opacity-5 rounded-full blur-3xl"></div>
+    <div class="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
+
+    <div class="relative z-10 flex flex-col md:flex-row items-center md:items-start gap-6">
+      <div class="shrink-0 relative group cursor-pointer">
+        <img src="{{ url_for('serve_file', filename=group.trainer.avatar.filename) if group.trainer and group.trainer.avatar else url_for('static', filename='default-avatar.png') }}"
+             class="w-24 h-24 rounded-full border-4 border-white/30 object-cover shadow-lg group-hover:scale-105 transition transform">
+        <div class="absolute -bottom-2 -right-2 bg-white text-indigo-600 text-xs font-black px-2.5 py-1 rounded-full shadow-md uppercase tracking-wider">
+          Coach
+        </div>
+      </div>
+
+      <div class="text-center md:text-left flex-1">
+        <h1 class="text-4xl font-black tracking-tight leading-tight">{{ group.name }}</h1>
+        <p class="text-blue-100 mt-2 text-lg font-medium max-w-2xl">
+          {{ group.description or "Командный дух и дисциплина — ключ к победе." }}
+        </p>
+
+        <div class="mt-6 flex flex-wrap justify-center md:justify-start gap-3">
+          <div class="inline-flex items-center px-4 py-1.5 rounded-full bg-white/20 backdrop-blur-md text-sm font-semibold border border-white/20 shadow-sm">
+            <i class="bi bi-people-fill mr-2"></i> {{ group.members|length }} атлетов
+          </div>
+
+          {% if current_user.is_trainer and group.trainer_id == current_user.id %}
+            <button onclick="openModal('members-modal')" class="inline-flex items-center px-4 py-1.5 rounded-full bg-white text-indigo-700 text-sm font-bold shadow-lg hover:bg-gray-50 hover:scale-105 transition transform">
+              <i class="bi bi-person-gear mr-2"></i> Участники
+            </button>
+            <a href="{{ url_for('admin_groups_list') }}" class="inline-flex items-center px-4 py-1.5 rounded-full bg-indigo-800/30 text-white text-sm font-bold hover:bg-indigo-800/50 transition border border-white/10">
+              <i class="bi bi-gear-fill mr-2"></i> Настройки
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+    {# --- ЛЕВАЯ КОЛОНКА (Расписание + Лидерборд) --- #}
+    <div class="space-y-8">
+
+      {# --- 2. РАСПИСАНИЕ --- #}
+      <div class="card p-5 border-t-4 border-t-indigo-500">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <i class="bi bi-calendar-week-fill text-indigo-500"></i> Тренировки
+          </h2>
+          {% if current_user.is_trainer and group.trainer_id == current_user.id %}
+            <button onclick="openModal('training-modal')"
+                    class="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center hover:bg-indigo-100 transition shadow-sm"
+                    title="Добавить тренировку">
+              <i class="bi bi-plus-lg text-lg font-bold"></i>
+            </button>
+          {% endif %}
+        </div>
+
+        {% if upcoming_trainings %}
+          <div class="space-y-3">
+            {% for t in upcoming_trainings %}
+              <div class="group relative bg-white border border-gray-100 rounded-xl p-3 shadow-sm hover:shadow-md transition hover:border-indigo-100">
+
+                {% if current_user.is_trainer and group.trainer_id == current_user.id %}
+                  <button onclick="deleteTraining({{ t.id }})"
+                          class="absolute top-2 right-2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1">
+                    <i class="bi bi-trash3-fill"></i>
+                  </button>
+                {% endif %}
+
+                <div class="flex gap-3">
+                  <div class="flex flex-col items-center justify-center w-12 h-12 bg-indigo-50 rounded-lg text-indigo-700 shrink-0">
+                    <span class="text-[10px] font-bold uppercase">{{ t.date.strftime('%b') }}</span>
+                    <span class="text-lg font-black leading-none">{{ t.date.day }}</span>
+                  </div>
+
+                  <div class="flex-1 min-w-0 pt-0.5">
+                    <h3 class="font-bold text-gray-900 truncate">{{ t.title }}</h3>
+                    <div class="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                      <span class="flex items-center gap-1"><i class="bi bi-clock"></i> {{ t.start_time.strftime('%H:%M') }}</span>
+                      {% if t.meeting_link %}
+                        <span class="w-1 h-1 rounded-full bg-gray-300"></span>
+                        <a href="{{ t.meeting_link }}" target="_blank" class="text-indigo-600 hover:underline flex items-center gap-1">
+                          <i class="bi bi-camera-video-fill"></i> Zoom
+                        </a>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-center py-8 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <i class="bi bi-calendar-x text-gray-300 text-2xl mb-2 block"></i>
+            <span class="text-sm text-gray-400 font-medium">Нет запланированных событий</span>
+          </div>
+        {% endif %}
+      </div>
+
+      {# --- 3. ЛИДЕРБОРД --- #}
+      <div class="card p-5 border-t-4 border-t-amber-400">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <i class="bi bi-trophy-fill text-amber-400"></i> Битва недели
+          </h2>
+          <button onclick="toggleLeaderboard()" id="lb-toggle-btn" class="text-xs font-bold text-gray-400 hover:text-indigo-600 uppercase tracking-wide transition">
+            Весь список
+          </button>
+        </div>
+
+        <div class="flex flex-col" id="leaderboard-container">
+          {# ИСПРАВЛЕНИЕ: Фильтруем список, исключая тренера (if not s.is_trainer_in_group) #}
+          {% for s in group_member_stats if not s.is_trainer_in_group %}
+            {# ВАЖНО: Тут мы пока используем заглушку для скора, т.к. бэкенд не передает SquadScoreLog.
+               В реальной версии тут должен быть s.score #}
+            {% set score = (loop.index * 100) % 250 + 50 %}
+            {% set is_me = (s.user.id == current_user.id) %}
+
+            <div class="leaderboard-row flex items-center justify-between py-3 px-2 rounded-lg {{ 'hidden' if loop.index > 5 else '' }} {{ 'bg-amber-50/50' if is_me else '' }}"
+                 data-rank="{{ loop.index }}">
+              <div class="flex items-center gap-3">
+                <div class="rank-badge rank-{{ loop.index if loop.index <= 3 else 'N' }}">
+                  {{ loop.index }}
+                </div>
+                <img src="{{ url_for('serve_file', filename=s.user.avatar.filename) if s.user.avatar else url_for('static', filename='default-avatar.png') }}"
+                     class="w-9 h-9 rounded-full object-cover shadow-sm">
+                <div>
+                  <div class="text-sm font-bold text-gray-800 leading-tight">
+                    {{ s.user.name }}
+                  </div>
+                  {% if is_me %}
+                    <div class="text-[10px] font-bold text-indigo-600">Это вы</div>
+                  {% endif %}
+                </div>
+              </div>
+
+              <div class="text-right">
+                <div class="text-sm font-black text-gray-700">{{ score }}</div>
+                <div class="text-[10px] text-gray-400 font-medium uppercase">pts</div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+
+    {# --- ПРАВАЯ КОЛОНКА (Лента) --- #}
+    <div class="lg:col-span-2 space-y-6">
+
+      {# Форма поста (Только для тренера) #}
+      {% if current_user.is_trainer and group.trainer_id == current_user.id %}
+      <div class="card p-5 shadow-lg border-indigo-100">
+        <div class="flex gap-4">
+          <img src="{{ url_for('serve_file', filename=current_user.avatar.filename) if current_user.avatar else url_for('static', filename='default-avatar.png') }}"
+               class="w-12 h-12 rounded-full object-cover shadow-sm border border-gray-100">
+          <div class="flex-1">
+            <form id="create-post-form" onsubmit="submitPost(event)">
+              <div class="relative">
+                <textarea name="text" rows="2" placeholder="Дайте напутствие команде, тренер..."
+                          class="w-full bg-gray-50 border-0 rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 resize-none transition-all focus:bg-white focus:shadow-inner"></textarea>
+
+                <div id="image-preview-container" class="hidden mt-3 relative inline-block group">
+                  <img id="image-preview" src="" class="h-24 rounded-xl border border-gray-200 shadow-sm object-cover">
+                  <div class="absolute inset-0 bg-black/20 rounded-xl opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                    <button type="button" onclick="clearImage()" class="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-red-600 transition transform hover:scale-110">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between mt-4">
+                <button type="button" onclick="document.getElementById('post-image-input').click()"
+                        class="text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-2 rounded-lg transition text-sm font-medium flex items-center gap-2">
+                  <i class="bi bi-camera-fill text-lg"></i> <span>Добавить фото</span>
+                </button>
+                <input type="file" name="image" id="post-image-input" class="hidden" accept="image/*" onchange="previewImage(this)">
+
+                <button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 hover:shadow-lg transition transform hover:-translate-y-0.5 active:translate-y-0">
+                  Опубликовать <i class="bi bi-send-fill ml-2"></i>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div id="feed-container" class="space-y-6">
+        <div class="text-center py-12">
+          <div class="animate-spin inline-block w-10 h-10 border-[3px] border-current border-t-transparent text-indigo-600 rounded-full" role="status"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{# --- МОДАЛКИ И LIGHTBOX --- #}
+
+{# Lightbox #}
+<div id="image-lightbox" onclick="closeLightbox()" class="fixed inset-0 z-[60] hidden bg-black/95 flex items-center justify-center cursor-zoom-out p-4 backdrop-blur-sm transition-opacity opacity-0">
+  <img id="lightbox-image" src="" class="max-w-full max-h-[90vh] rounded-lg shadow-2xl transform scale-95 transition-transform duration-300">
+</div>
+
+{# Модалка ТРЕНИРОВКИ #}
+<div id="training-modal" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity" onclick="closeModal('training-modal')"></div>
+  <div class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl relative transform transition-all scale-95 opacity-0 modal-content">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-xl font-black text-gray-900">Новое событие</h3>
+        <button onclick="closeModal('training-modal')" class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200 transition">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <form onsubmit="submitTraining(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Название</label>
+          <input type="text" name="title" required value="Групповая тренировка" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Дата</label>
+            <input type="date" name="date" required class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Начало</label>
+            <input type="time" name="start_time" required class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Конец</label>
+            <input type="time" name="end_time" required class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none">
+          </div>
+          <div>
+             <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Zoom Link</label>
+             <input type="url" name="meeting_link" placeholder="https://" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Заметки</label>
+          <textarea name="description" rows="3" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none resize-none"></textarea>
+        </div>
+
+        <button type="submit" class="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200 mt-2">
+          Назначить тренировку
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# Модалка УЧАСТНИКИ (Управление) #}
+<div id="members-modal" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity" onclick="closeModal('members-modal')"></div>
+  <div class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-2xl w-full max-w-lg p-0 shadow-2xl relative transform transition-all scale-95 opacity-0 modal-content overflow-hidden flex flex-col max-h-[80vh]">
+      <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+        <div>
+          <h3 class="text-xl font-black text-gray-900">Управление составом</h3>
+          <p class="text-xs text-gray-500 font-medium mt-1">Всего: {{ group.members|length }} чел.</p>
+        </div>
+        <button onclick="closeModal('members-modal')" class="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+    <div class="overflow-y-auto p-2">
+        {# Используем group_member_stats, так как там есть флаг is_inactive #}
+        {% for s in group_member_stats if not s.is_trainer_in_group %}
+          <div class="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl group transition">
+            <div class="flex items-center gap-3">
+              <div class="relative">
+                <img src="{{ url_for('serve_file', filename=s.user.avatar.filename) if s.user.avatar else url_for('static', filename='default-avatar.png') }}"
+                     class="w-10 h-10 rounded-full object-cover border border-gray-200 {{ 'grayscale opacity-70' if s.is_inactive else '' }}">
+
+                {% if s.is_inactive %}
+                  <div class="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 shadow-sm" title="Неактивен {{ s.days_inactive }} дн.">
+                    <div class="w-4 h-4 bg-amber-100 rounded-full flex items-center justify-center text-[10px]">💤</div>
+                  </div>
+                {% endif %}
+              </div>
+
+              <div>
+                <div class="font-bold text-gray-900 text-sm flex items-center gap-2">
+                  {{ s.user.name }}
+                  {% if s.is_inactive %}
+                    <span class="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">СПИТ ({{ s.days_inactive }}д)</span>
+                  {% endif %}
+                </div>
+                <div class="text-xs text-gray-400">{{ s.user.email }}</div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                {# Кнопка "Напомнить" (только для тренера и только если юзер неактивен) #}
+                {% if s.is_inactive %}
+                  <button onclick="nudgeUser({{ s.user.id }}, this)"
+                          class="bg-amber-100 text-amber-600 hover:bg-amber-200 p-2 rounded-lg transition"
+                          title="Отправить напоминание">
+                    <i class="bi bi-bell-fill text-lg"></i>
+                  </button>
+                {% endif %}
+
+                <form action="{{ url_for('admin_delete_user', user_id=s.user.id) }}" method="POST" onsubmit="return confirm('Удалить участника из группы?');">
+                   <button type="submit" class="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition" title="Исключить">
+                     <i class="bi bi-person-x-fill text-lg"></i>
+                   </button>
+                </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const GROUP_ID = {{ group.id }};
+  const CURRENT_USER_ID = {{ current_user.id }};
+  const IS_TRAINER = {{ 'true' if current_user.is_trainer and group.trainer_id == current_user.id else 'false' }};
+
+  // --- MODAL UTILS ---
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    setTimeout(() => {
+      el.querySelector('.modal-content').classList.remove('scale-95', 'opacity-0');
+      el.querySelector('.modal-content').classList.add('scale-100', 'opacity-100');
+    }, 10);
+  }
+
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    el.querySelector('.modal-content').classList.remove('scale-100', 'opacity-100');
+    el.querySelector('.modal-content').classList.add('scale-95', 'opacity-0');
+    setTimeout(() => {
+      el.classList.add('hidden');
+    }, 200);
+  }
+
+  // --- ТРЕНИРОВКИ ---
+  async function submitTraining(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    try {
+      const res = await fetch(`/groups/${GROUP_ID}/trainings/new`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.ok) window.location.reload();
+      else alert(data.error);
+    } catch (err) { alert('Ошибка'); }
+  }
+
+  async function deleteTraining(tid) {
+    if(!confirm('Удалить эту тренировку?')) return;
+    try {
+      const res = await fetch(`/api/trainings/${tid}`, { method: 'DELETE' });
+      const data = await res.json();
+      if(data.ok) window.location.reload();
+    } catch(e) { alert('Ошибка удаления'); }
+  }
+
+  // --- ЛИДЕРБОРД ---
+  let lbExpanded = false;
+  function toggleLeaderboard() {
+    lbExpanded = !lbExpanded;
+    const rows = document.querySelectorAll('.leaderboard-row');
+    const btn = document.getElementById('lb-toggle-btn');
+    rows.forEach((row, index) => {
+      if (index >= 5) row.classList.toggle('hidden', !lbExpanded);
+    });
+    btn.innerText = lbExpanded ? "Свернуть" : "Весь список";
+  }
+
+  // --- ПОСТЫ И ИЗОБРАЖЕНИЯ ---
+  function previewImage(input) {
+    if (input.files && input.files[0]) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById('image-preview').src = e.target.result;
+        document.getElementById('image-preview-container').classList.remove('hidden');
+      }
+      reader.readAsDataURL(input.files[0]);
+    }
+  }
+
+  function clearImage() {
+    document.getElementById('post-image-input').value = '';
+    document.getElementById('image-preview-container').classList.add('hidden');
+  }
+
+  async function submitPost(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    if (!formData.get('text').trim() && !formData.get('image').size) return;
+
+    try {
+      const res = await fetch(`/api/groups/${GROUP_ID}/post`, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.ok) { form.reset(); clearImage(); loadFeed(); }
+      else alert(data.error);
+    } catch (err) { alert('Ошибка'); }
+  }
+
+  // --- ЛЕНТА ---
+  async function loadFeed() {
+    const container = document.getElementById('feed-container');
+    try {
+      const res = await fetch(`/api/groups/${GROUP_ID}/feed`);
+      const data = await res.json();
+      if (data.ok) renderFeed(data.feed);
+    } catch (err) {
+      container.innerHTML = `<div class="text-center text-red-500 py-10">Ошибка загрузки ленты</div>`;
+    }
+  }
+
+  async function deletePost(postId) {
+    if(!confirm('Удалить этот пост?')) return;
+    // Пока только визуальное удаление, т.к. API удаления еще нет в app.py
+    // Когда добавите API, раскомментируйте fetch ниже
+    /*
+    try {
+      await fetch(`/api/groups/posts/${postId}`, { method: 'DELETE' });
+      document.getElementById(`post-${postId}`).remove();
+    } catch(e) {}
+    */
+    alert('Функция удаления будет доступна после обновления API');
+  }
+
+  function renderFeed(posts) {
+    const container = document.getElementById('feed-container');
+    if (posts.length === 0) {
+      container.innerHTML = `
+        <div class="text-center py-16">
+          <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-400">
+            <i class="bi bi-chat-square-quote text-2xl"></i>
+          </div>
+          <h3 class="text-gray-900 font-bold">Лента пуста</h3>
+          <p class="text-gray-500 text-sm mt-1">Опубликуйте первое сообщение для команды</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = posts.map(post => {
+      const isSystem = post.type === 'system';
+      const userAvatar = post.avatar ? `/files/${post.avatar}` : '/static/default-avatar.png'; // Исправлен путь к дефолту
+      const postImage = post.image ? `/files/${post.image}` : null;
+
+      const canDelete = IS_TRAINER || post.user_id === CURRENT_USER_ID;
+
+      const commentsHtml = post.comments.map(c => `
+        <div class="flex gap-3 mb-4 group hover-trigger">
+          <img src="${c.avatar ? `/files/${c.avatar}` : '/static/default-avatar.png'}" class="comment-avatar shrink-0 mt-1">
+          <div class="flex-1">
+            <div class="bg-gray-100 px-4 py-2.5 rounded-2xl rounded-tl-none inline-block max-w-full relative">
+              <span class="font-bold text-gray-900 text-xs block mb-0.5">${c.user_name}</span>
+              <p class="text-gray-800 text-sm leading-snug">${c.text}</p>
+            </div>
+            <div class="text-[10px] text-gray-400 mt-1 ml-1 font-medium">${c.timestamp}</div>
+          </div>
+        </div>
+      `).join('');
+
+      return `
+        <article class="card fade-in overflow-visible" id="post-${post.id}">
+          <div class="p-5">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-3 mb-3">
+                ${isSystem
+                  ? `<div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 shadow-sm"><i class="bi bi-trophy-fill"></i></div>`
+                  : `<img src="${userAvatar}" class="feed-avatar">`
+                }
+                <div>
+                  <div class="font-bold text-gray-900 text-sm flex items-center gap-2">
+                    ${post.user_name}
+                    ${!isSystem && post.user_id == {{ group.trainer_id }} ? '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider">Coach</span>' : ''}
+                  </div>
+                  <div class="text-xs text-gray-400 font-medium">${post.timestamp}</div>
+                </div>
+              </div>
+
+              ${ canDelete ? `
+                <button onclick="deletePost(${post.id})" class="text-gray-300 hover:text-red-500 transition p-1" title="Удалить">
+                  <i class="bi bi-trash3"></i>
+                </button>
+              ` : ''}
+            </div>
+
+            <div class="text-gray-800 text-[15px] leading-relaxed whitespace-pre-wrap pl-1">${post.text}</div>
+
+            ${postImage ? `<img src="${postImage}" class="post-img shadow-sm hover:shadow-md transition" onclick="openLightbox(this.src)">` : ''}
+
+            <div class="mt-5 flex items-center gap-6 border-t border-gray-100 pt-4">
+              <button onclick="toggleLike(${post.id})" class="like-btn group flex items-center gap-2 text-sm font-semibold transition ${post.is_liked ? 'text-red-500' : 'text-gray-500 hover:text-gray-700'}">
+                <div class="p-2 rounded-full group-hover:bg-red-50 transition">
+                   <i class="bi ${post.is_liked ? 'bi-heart-fill' : 'bi-heart'} text-lg"></i>
+                </div>
+                <span class="likes-count">${post.likes_count > 0 ? post.likes_count : 'Нравится'}</span>
+              </button>
+
+              <button onclick="focusComment(${post.id})" class="group flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-indigo-600 transition">
+                <div class="p-2 rounded-full group-hover:bg-indigo-50 transition">
+                  <i class="bi bi-chat text-lg"></i>
+                </div>
+                <span>${post.comments.length > 0 ? post.comments.length : 'Комментировать'}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-gray-50/50 p-5 border-t border-gray-100 ${post.comments.length === 0 ? '' : 'pt-4'}">
+            <div id="comments-list-${post.id}">
+              ${commentsHtml}
+            </div>
+
+            <form onsubmit="submitComment(event, ${post.id})" class="flex gap-3 mt-4 items-center">
+              <img src="{{ url_for('serve_file', filename=current_user.avatar.filename) if current_user.avatar else url_for('static', filename='default-avatar.png') }}" class="w-8 h-8 rounded-full object-cover border border-gray-200">
+              <div class="flex-1 relative group">
+                <input type="text" name="text" placeholder="Написать комментарий..."
+                       class="w-full bg-white border-0 shadow-sm rounded-full py-2.5 px-5 text-sm focus:ring-2 focus:ring-indigo-500 focus:shadow-md transition">
+                <button type="submit" class="absolute right-2 top-1.5 w-8 h-8 flex items-center justify-center text-indigo-600 hover:bg-indigo-50 rounded-full transition">
+                  <i class="bi bi-send-fill transform rotate-45 translate-x-px translate-y-px"></i>
+                </button>
+              </div>
+            </form>
+          </div>
+        </article>
+      `;
+    }).join('');
+  }
+
+  // --- ЛАЙКИ И КОММЕНТАРИИ ---
+  async function toggleLike(postId) {
+    // ИСПРАВЛЕНО: ищем кнопку по классу .like-btn внутри поста
+    const postEl = document.getElementById(`post-${postId}`);
+    const btn = postEl.querySelector('.like-btn');
+
+    if (!btn) return; // Защита от ошибок
+
+    const icon = btn.querySelector('i');
+    const countSpan = btn.querySelector('.likes-count');
+    const isLiked = icon.classList.contains('bi-heart-fill');
+
+    // Парсим число или 0, если там текст "Нравится"
+    let count = parseInt(countSpan.innerText);
+    if (isNaN(count)) count = 0;
+
+    // Toggle visual
+    if (isLiked) {
+      icon.classList.replace('bi-heart-fill', 'bi-heart');
+      btn.classList.replace('text-red-500', 'text-gray-500');
+      count = Math.max(0, count - 1);
+    } else {
+      icon.classList.replace('bi-heart', 'bi-heart-fill');
+      btn.classList.replace('text-gray-500', 'text-red-500');
+      count++;
+    }
+    countSpan.innerText = count > 0 ? count : 'Нравится';
+
+    try { await fetch(`/group_message/${postId}/react`, { method: 'POST' }); } catch(e) {}
+  }
+
+  function focusComment(postId) {
+    const input = document.querySelector(`#post-${postId} input[name="text"]`);
+    if (input) input.focus();
+  }
+
+  // --- НАПОМИНАНИЯ (NUDGE) ---
+  async function nudgeUser(userId, btn) {
+    // Анимация нажатия
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = '<div class="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full"></div>';
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(`/api/groups/nudge/${userId}`, { method: 'POST' });
+      const data = await res.json();
+
+      if (data.ok) {
+        btn.classList.remove('bg-amber-100', 'text-amber-600', 'hover:bg-amber-200');
+        btn.classList.add('bg-green-100', 'text-green-600');
+        btn.innerHTML = '<i class="bi bi-check-lg text-lg"></i>';
+        // Возвращаем как было через 3 сек (опционально, или оставляем зеленым)
+      } else {
+        alert('Ошибка: ' + data.error);
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert('Ошибка сети');
+      btn.innerHTML = originalContent;
+      btn.disabled = false;
+    }
+  }
+
+  async function submitComment(e, postId) {
+    e.preventDefault();
+    const input = e.target.text;
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+
+    try {
+      const res = await fetch(`/api/groups/${GROUP_ID}/reply`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ parent_id: postId, text: text })
+      });
+      const data = await res.json();
+      if (data.ok) loadFeed();
+    } catch(err) {}
+  }
+
+  function openLightbox(src) {
+    const lb = document.getElementById('image-lightbox');
+    const img = document.getElementById('lightbox-image');
+    lb.classList.remove('hidden');
+    setTimeout(() => lb.classList.remove('opacity-0'), 10);
+    img.src = src;
+  }
+
+  function closeLightbox() {
+    const lb = document.getElementById('image-lightbox');
+    lb.classList.add('opacity-0');
+    setTimeout(() => lb.classList.add('hidden'), 300);
+  }
+
+  document.addEventListener('DOMContentLoaded', loadFeed);
+</script>
+{% endblock %}

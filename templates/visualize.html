@@ -1,0 +1,325 @@
+{% extends 'base.html' %}
+{% block title %}Визуализация тела{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  /* --- АНИМАЦИЯ ПОЯВЛЕНИЯ ЭЛЕМЕНТОВ --- */
+  @keyframes fancyFadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(40px) scale(0.95);
+      filter: blur(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0);
+    }
+  }
+  .fancy-animate {
+    opacity: 0;
+    animation-fill-mode: forwards;
+    animation-name: fancyFadeInUp;
+    animation-duration: 0.8s;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  /* --- СТИЛИ СКЕЛЕТОНОВ --- */
+  @keyframes shimmer {
+    0% { background-position: -1000px 0; }
+    100% { background-position: 1000px 0; }
+  }
+  .skeleton {
+    background-color: #e5e7eb;
+    background-image: linear-gradient(to right, #e5e7eb 0%, #f3f4f6 20%, #e5e7eb 40%, #e5e7eb 100%);
+    background-repeat: no-repeat;
+    background-size: 2000px 100%;
+    border-radius: 0.75rem;
+    animation: shimmer 2s linear infinite;
+  }
+  .skeleton-text {
+    height: 1.25rem;
+    width: 60%;
+    margin: 0 auto 0.75rem auto;
+    border-radius: 0.5rem;
+  }
+  .skeleton-img {
+    aspect-ratio: 3 / 4;
+    width: 100%;
+  }
+
+  /* --- СТИЛИ КРУГОВОГО ПРОГРЕСС-БАРА --- */
+  .progress-ring-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .progress-ring__circle {
+    transition: stroke-dashoffset 1.5s cubic-bezier(0.19, 1, 0.22, 1);
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+  }
+  .progress-ring__text {
+    font-size: 2.25rem; /* text-4xl */
+    font-weight: 800; /* font-extrabold */
+    fill: #f97316; /* orange-500 */
+    transition: fill 0.3s;
+  }
+  /* Стили для всплывающей подсказки (tooltip) */
+  .progress-tooltip {
+    position: absolute;
+    bottom: calc(100% + 10px); /* Появляется над элементом */
+    left: 50%;
+    transform: translateX(-50%) scale(0.95);
+    background-color: #374151; /* gray-700 */
+    color: white;
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    width: max-content;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none; /* Чтобы не мешал наведению */
+    z-index: 10;
+  }
+  .progress-ring-container:hover .progress-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) scale(1);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bg-white min-h-screen">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+
+    <div class="text-center mb-12 fancy-animate" style="animation-delay: 0.1s;">
+      <h1 class="text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl">
+        AI Визуализация вашего тела
+      </h1>
+      <p class="mt-4 text-lg text-gray-600">
+        Увидьте, как изменятся ваши формы при достижении цели.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+      <aside class="lg:col-span-1 fancy-animate" style="animation-delay: 0.3s;">
+        <div class="sticky top-8 space-y-6">
+          <div class="bg-white rounded-2xl shadow p-6 border border-gray-100">
+            <h2 class="text-xl font-semibold mb-4 text-gray-800">Параметры для генерации</h2>
+
+            <div class="flex items-center gap-4">
+              <img class="w-16 h-16 rounded-full object-cover ring-2 ring-offset-2 ring-indigo-500"
+                   src="{{ url_for('serve_file', filename=user.avatar.filename) if current_user.avatar else url_for('static', filename='default-avatar.png') }}"
+                   alt="avatar">
+              <div>
+                <div class="font-bold text-gray-900">{{ current_user.name }}</div>
+                <div class="text-sm text-gray-500">
+                  Согласие на лицо:
+                  {% if current_user.face_consent %}
+                    <span class="font-medium text-teal-600">Дано</span>
+                  {% else %}
+                    <a href="{{ url_for('profile') }}" class="font-medium text-amber-600 hover:underline">Не дано</a>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            <hr class="my-6 border-gray-200">
+
+            {% if latest_analysis %}
+              <h3 class="text-md font-semibold text-gray-700 mb-3">Данные последнего анализа:</h3>
+              <ul class="space-y-2 text-sm">
+                  <li class="flex justify-between text-gray-600"><span>Рост:</span> <b class="font-mono text-gray-800">{{ latest_analysis.height or '—' }} см</b></li>
+                  <li class="flex justify-between text-gray-600"><span>Вес:</span> <b class="font-mono text-gray-800">{{ latest_analysis.weight or '—' }} кг</b></li>
+                  <li class="flex justify-between text-gray-600"><span>Мышцы:</span> <b class="font-mono text-gray-800">{{ latest_analysis.muscle_mass or '—' }} кг</b></li>
+                  <li class="flex justify-between text-gray-600"><span>Жир:</span> <b class="font-mono text-gray-800">{{ latest_analysis.fat_mass or '—' }} кг</b></li>
+              </ul>
+            {% else %}
+              <div class="text-sm text-center bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <p class="font-medium text-yellow-800">Нет данных для анализа.</p>
+                <a href="{{ url_for('profile') }}" class="text-indigo-600 hover:underline font-semibold text-xs mt-1 inline-block">Загрузить в профиле</a>
+              </div>
+            {% endif %}
+          </div>
+
+          <form id="vizForm" action="{{ url_for('visualize_run') }}" method="post" class="fancy-animate" style="animation-delay: 0.5s;">
+            {% if latest_analysis %}
+              <button id="vizBtn" type="submit"
+                      class="w-full py-3 px-4 rounded-xl bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300 ease-in-out">
+                <span class="btn-text">
+                  {% if latest_visualization %}Перегенерировать 🔄{% else %}Визуализировать ✨{% endif %}
+                </span>
+              </button>
+            {% else %}
+              <button type="button" disabled class="w-full py-3 px-4 rounded-xl bg-gray-300 text-gray-500 cursor-not-allowed">
+                Сначала загрузите анализ
+              </button>
+            {% endif %}
+          </form>
+        </div>
+      </aside>
+
+      <main class="lg:col-span-2 space-y-8">
+        <div id="visualization-content" class="fancy-animate" style="animation-delay: 0.5s;">
+          {% if latest_visualization %}
+            {% set viz = latest_visualization %}
+            <div class="generated-content">
+              <p class="text-sm text-center text-gray-500 mb-6">Последняя генерация от <span id="viz-date">{{ viz.created_at.strftime('%d.%m.%Y %H:%M') }}</span></p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div class="text-center">
+                  <h3 class="text-lg font-semibold text-gray-800 mb-3">Текущая форма</h3>
+                  <div class="aspect-w-3 aspect-h-4 rounded-xl overflow-hidden transform hover:scale-105 transition-transform duration-300">
+                    <img id="viz-current-img" src="{{ url_for('serve_file', filename=viz.image_current_path) }}" alt="Текущая форма" class="object-cover w-full h-full bg-gray-100">
+                  </div>
+                </div>
+                <div class="text-center">
+                  <h3 class="text-lg font-semibold text-gray-800 mb-3">Целевая форма</h3>
+                   <div class="aspect-w-3 aspect-h-4 rounded-xl overflow-hidden transform hover:scale-105 transition-transform duration-300">
+                    <img id="viz-target-img" src="{{ url_for('serve_file', filename=viz.image_target_path) }}" alt="Целевая форма" class="object-cover w-full h-full bg-gray-100">
+                  </div>
+                </div>
+              </div>
+            </div>
+          {% else %}
+            <div id="skeleton-loader">
+              <p class="text-sm text-center text-gray-400 mb-6">Ожидание первой генерации...</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div class="text-center">
+                  <div class="skeleton skeleton-text"></div>
+                  <div class="skeleton skeleton-img"></div>
+                </div>
+                <div class="text-center">
+                  <div class="skeleton skeleton-text"></div>
+                  <div class="skeleton skeleton-img"></div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if latest_visualization and fat_loss_progress and current_user.has_subscription %}
+        <div id="progress-container" class="fancy-animate" style="animation-delay: 0.8s;" data-percentage="{{ fat_loss_progress.percentage }}">
+          <div class="progress-ring-container">
+            <svg class="w-48 h-48" viewBox="0 0 120 120">
+              <circle class="text-gray-200" stroke-width="8" stroke="currentColor" fill="transparent" r="52" cx="60" cy="60"/>
+              <circle id="progress-ring-circle" class="progress-ring__circle text-orange-500"
+                      stroke-width="8" stroke-linecap="round" stroke="currentColor" fill="transparent"
+                      r="52" cx="60" cy="60"/>
+              <text id="progress-ring-text" class="progress-ring__text" x="50%" y="50%" text-anchor="middle" dy=".3em">0%</text>
+            </svg>
+            <div class="progress-tooltip">
+              <h4 class="font-bold text-center mb-2 text-base">🔥 Прогресс жиросжигания</h4>
+              <ul class="space-y-1 text-sm">
+                <li class="flex justify-between gap-4"><span>Начальный вес жира:</span> <b class="font-mono">{{ fat_loss_progress.initial_kg|round(1) }} кг</b></li>
+                <li class="flex justify-between gap-4"><span>Целевой вес жира:</span> <b class="font-mono">{{ fat_loss_progress.goal_kg|round(1) }} кг</b></li>
+                <li class="flex justify-between gap-4 text-green-300"><span>Сожжено:</span> <b class="font-mono">{{ fat_loss_progress.burned_kg|round(2) }} кг</b></li>
+                <li class="flex justify-between gap-4 text-red-300"><span>Осталось:</span> <b class="font-mono">{{ (fat_loss_progress.total_to_lose_kg - fat_loss_progress.burned_kg)|round(2) }} кг</b></li>
+              </ul>
+              <p class="text-xs text-center text-gray-400 mt-3 italic">"{{ fat_loss_progress.motivation_text }}"</p>
+            </div>
+            </div>
+        </div>
+        {% endif %}
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    // --- СКРИПТ ДЛЯ ВИЗУАЛИЗАЦИИ ---
+    const form = document.getElementById('vizForm');
+    if (form) {
+      // ... (этот блок без изменений, оставьте как было)
+    }
+
+    // --- НОВЫЙ СКРИПТ ДЛЯ АНИМАЦИИ КРУГОВОГО ПРОГРЕСС-БАРА ---
+    const progressContainer = document.getElementById('progress-container');
+    if (progressContainer) {
+      const circle = document.getElementById('progress-ring-circle');
+      const text = document.getElementById('progress-ring-text');
+      const radius = circle.r.baseVal.value;
+      const circumference = 2 * Math.PI * radius;
+      const targetPercentage = parseFloat(progressContainer.dataset.percentage) || 0;
+
+      // Устанавливаем начальное состояние
+      circle.style.strokeDasharray = `${circumference} ${circumference}`;
+      circle.style.strokeDashoffset = circumference;
+
+      const animateProgress = () => {
+        const targetOffset = circumference - (targetPercentage / 100) * circumference;
+        let startTimestamp = null;
+        const duration = 1500; // 1.5 секунды
+
+        const step = (timestamp) => {
+          if (!startTimestamp) startTimestamp = timestamp;
+          const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+
+          // Анимация числа
+          const currentPercentage = Math.floor(progress * targetPercentage);
+          text.textContent = `${currentPercentage}%`;
+
+          // Анимация круга
+          circle.style.strokeDashoffset = circumference - progress * (circumference - targetOffset);
+
+          if (progress < 1) {
+            window.requestAnimationFrame(step);
+          } else {
+            text.textContent = `${Math.round(targetPercentage)}%`;
+            if (targetPercentage >= 100) {
+                 text.style.fill = '#10b981'; // emerald-500
+            }
+          }
+        };
+        window.requestAnimationFrame(step);
+      };
+
+      // Запускаем анимацию, когда элемент становится видимым
+      const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          animateProgress();
+          observer.disconnect(); // Отключаем после одного срабатывания
+        }
+      }, { threshold: 0.5 });
+      observer.observe(progressContainer);
+    }
+
+    // Вспомогательная функция для замены скелетона на реальный контент
+    function updateVisualization(viz) {
+        const contentContainer = document.getElementById('visualization-content');
+        contentContainer.innerHTML = createResultHtml(viz);
+    }
+
+    function createResultHtml(viz) {
+        return `
+            <div class="generated-content fancy-animate">
+              <p class="text-sm text-center text-gray-500 mb-6">Последняя генерация от <span id="viz-date">${viz.created_at}</span></p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div class="text-center">
+                  <h3 class="text-lg font-semibold text-gray-800 mb-3">Текущая форма</h3>
+                  <div class="aspect-w-3 aspect-h-4 rounded-xl overflow-hidden transform hover:scale-105 transition-transform duration-300">
+                    <img id="viz-current-img" src="${viz.image_current_path}" alt="Текущая форма" class="object-cover w-full h-full bg-gray-100">
+                  </div>
+                </div>
+                <div class="text-center">
+                  <h3 class="text-lg font-semibold text-gray-800 mb-3">Целевая форма</h3>
+                   <div class="aspect-w-3 aspect-h-4 rounded-xl overflow-hidden transform hover:scale-105 transition-transform duration-300">
+                    <img id="viz-target-img" src="${viz.image_target_path}" alt="Целевая форма" class="object-cover w-full h-full bg-gray-100">
+                  </div>
+                </div>
+              </div>
+            </div>
+        `;
+    }
+
+    // PS: Убедитесь, что ваш JS-код для отправки формы `vizForm`
+    // вызывает `updateVisualization(data.visualization)` при успехе,
+    // чтобы замена скелетона на контент работала.
+});
+</script>
+{% endblock %}

@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block title %}
+    {% if ai_comment %}Анализ прогресса{% else %}Ваша трансформация{% endif %}
+{% endblock %}
+
+
+{% block head %}
+{{ super() }}
+<!-- Подключение TailwindCSS (если его нет в base.html) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  /* --- Анимации для "магии" --- */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+  .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+  .animate-fade-out { animation: fadeOut 0.5s ease-in forwards; }
+
+  /* "Вжух" эффект появления результата */
+  @keyframes whoosh-in {
+    0% { opacity: 0; transform: scale(0.9) translateY(30px); filter: blur(5px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+  }
+  .animate-whoosh-in { animation: whoosh-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+
+  /* Пульсация стрелки и показателей */
+  @keyframes pulse-glow {
+    0%, 100% { color: #4338ca; text-shadow: 0 0 8px rgba(99, 102, 241, 0.5); }
+    50% { color: #a5b4fc; text-shadow: 0 0 25px rgba(129, 140, 248, 1); }
+  }
+  .animate-pulse-glow { animation: pulse-glow 1.8s ease-in-out infinite; }
+
+  /* Пульсация карточки прелоадера */
+  @keyframes pulse-card {
+    0%, 100% { transform: scale(1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15); }
+    50% { transform: scale(1.02); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+  }
+  .animate-pulse-card {
+      animation: pulse-card 2.5s ease-in-out infinite;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="page-container" class="max-w-4xl mx-auto py-12 px-4 transition-opacity duration-500">
+
+  <div id="confirmation-container">
+    <div class="text-center mb-8">
+      {% if not user.initial_body_analysis_id and not ai_comment %}
+        <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Ваш анализ готов!</h1>
+        <p class="mt-3 text-lg text-gray-600">Проверьте показатели и установите ваши цели.</p>
+      {% elif ai_comment %}
+         <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Промежуточный итог!</h1>
+         <p class="mt-3 text-lg text-gray-600">Ваш новый замер сохранен, а ИИ-тренер подготовил анализ.</p>
+      {% else %}
+        <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Новый замер тела</h1>
+        <p class="mt-3 text-lg text-gray-600">Проверьте новые показатели. Они будут сохранены в вашу историю прогресса.</p>
+      {% endif %}
+    </div>
+
+    {# --- ИНТЕГРИРОВАННЫЙ БЛОК КОММЕНТАРИЯ ОТ ИИ --- #}
+    {% if ai_comment %}
+    <div class="mb-8 animate-whoosh-in">
+        <div class="bg-indigo-50 border border-indigo-200 rounded-2xl shadow-lg overflow-hidden">
+            <div class="p-4 bg-indigo-600 text-white flex items-center gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                <h3 class="text-xl font-semibold">Анализ вашего прогресса от ИИ-тренера</h3>
+            </div>
+            <div class="p-6">
+                <p class="text-gray-700 leading-relaxed" style="white-space: pre-wrap;">{{ ai_comment }}</p>
+            </div>
+        </div>
+        <div class="text-center mt-8">
+            <a href="{{ url_for('profile') }}" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-gray-800 text-white font-semibold shadow-lg hover:bg-black transform hover:-translate-y-0.5 transition-all">
+              Отлично! Вернуться в профиль
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <form id="analysisForm" method="POST" action="{{ url_for('confirm_analysis') }}" class="bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-200/80 space-y-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div class="bg-gray-50 border rounded-xl p-4">
+          <div class="text-sm text-gray-500 mb-1 flex items-center gap-2">⚖️ Вес</div>
+          <div id="form-current-weight" class="text-3xl font-bold text-gray-800">{{ data.weight }} <span class="text-xl text-gray-500">кг</span></div>
+        </div>
+        <div class="bg-gray-50 border rounded-xl p-4">
+          <label for="height" class="text-sm text-gray-500 mb-1 block flex items-center gap-2">📏 Рост</label>
+          <input type="number" name="height" id="height" value="{{ data.height }}" class="w-full bg-transparent border-0 text-3xl font-bold text-gray-800 p-0 focus:outline-none focus:ring-0">
+        </div>
+      </div>
+
+      {% if not user.initial_body_analysis_id %}
+      <h3 class="text-xl font-semibold text-gray-800 !mt-8 mb-4">Ваши цели</h3>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-green-50 border border-green-200 rounded-xl p-5">
+          <div class="text-sm font-medium text-green-800 mb-2 flex items-center gap-2">💪 Мышечная масса</div>
+          <div class="flex items-end gap-4">
+            <div>
+              <div class="text-xs text-gray-500">Сейчас</div>
+              <div id="form-current-muscle" class="text-3xl font-bold text-green-900">{{ data.muscle_mass }} <span class="text-xl">кг</span></div>
+            </div>
+            <div class="text-2xl text-gray-400 pb-1">→</div>
+            <div class="flex-1">
+              <label for="muscle_mass_goal" class="text-xs text-gray-500">Ваша цель</label>
+              <input type="number" step="0.1" name="muscle_mass_goal" id="muscle_mass_goal" value="{{ data.muscle_mass_goal | round(1) }}" class="w-full bg-white font-semibold text-gray-800 rounded-md px-2 py-1.5 border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+            </div>
+          </div>
+        </div>
+        <div class="bg-orange-50 border border-orange-200 rounded-xl p-5">
+          <div class="text-sm font-medium text-orange-800 mb-2 flex items-center gap-2">🧈 Жировая масса</div>
+          <div class="flex items-end gap-4">
+            <div>
+              <div class="text-xs text-gray-500">Сейчас</div>
+              <div id="form-current-fat" class="text-3xl font-bold text-orange-900">{{ data.fat_mass }} <span class="text-xl">кг</span></div>
+            </div>
+            <div class="text-2xl text-gray-400 pb-1">→</div>
+            <div class="flex-1">
+              <label for="fat_mass_goal" class="text-xs text-gray-500">Ваша цель</label>
+              <input type="number" step="0.1" name="fat_mass_goal" id="fat_mass_goal" value="{{ data.fat_mass_goal | round(1) }}" class="w-full bg-white font-semibold text-gray-800 rounded-md px-2 py-1.5 border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="!mt-8">
+          <h3 class="text-lg font-semibold text-gray-700 mb-4">Дополнительные показатели</h3>
+          {% set labels = { "bmi": ("ИМТ", "", "📐"), "body_age": ("Возраст тела", "лет", "🧬"), "metabolism": ("Базовый обмен", "ккал", "⚡") } %}
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {% for key in ['bmi', 'body_age', 'metabolism'] %}{% if data.get(key) is not none %}
+            <div class="bg-gray-50/70 border rounded-lg p-3">
+              <div class="text-xs text-gray-500">{{ labels[key][2] }} {{ labels[key][0] }}</div>
+              <div class="text-xl font-bold text-gray-800 mt-1">{{ data[key] }}<span class="text-sm font-medium text-gray-500 ml-1">{{ labels[key][1] }}</span></div>
+            </div>
+            {% endif %}{% endfor %}
+          </div>
+      </div>
+      <div class="text-center pt-8">
+        {% if not user.initial_body_analysis_id %}
+            <button id="saveBtn" type="submit" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-500 text-white font-semibold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 transform hover:-translate-y-1 transition-all duration-300">
+              Сохранить и увидеть магию ✨
+            </button>
+        {% else %}
+            <button id="saveBtn" type="submit" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-500 text-white font-semibold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 transform hover:-translate-y-1 transition-all duration-300">
+              Сохранить новый замер
+            </button>
+        {% endif %}
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div id="result-container" class="hidden">
+      <div class="text-center mb-10">
+        <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Ваша трансформация!</h1>
+        <p class="mt-3 text-lg text-gray-600">Вот как вы можете выглядить у вашей цели</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="text-center">
+          <h2 class="text-2xl font-bold mb-4 text-gray-500">Текущая форма</h2>
+          <div id="before-metrics" class="space-y-2 text-lg p-4 mb-4 bg-gray-50 rounded-lg"></div>
+          <div class="rounded-2xl overflow-hidden shadow-xl">
+            <img id="before-img" src="" alt="Текущая форма" class="w-full bg-gray-100">
+          </div>
+        </div>
+        <div class="text-center">
+          <h2 class="text-2xl font-bold mb-4 text-green-600">Целевая форма</h2>
+          <div id="after-metrics" class="space-y-2 text-lg p-4 mb-4 bg-gray-50 rounded-lg"></div>
+          <div class="rounded-2xl overflow-hidden shadow-xl">
+            <img id="after-img" src="" alt="Целевая форма" class="w-full bg-gray-100">
+          </div>
+        </div>
+      </div>
+       <div class="text-center mt-12">
+        <a href="/profile" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-gray-800 text-white font-semibold shadow-lg hover:bg-black transform hover:-translate-y-0.5 transition-all">
+          Отлично! Вернуться в профиль
+        </a>
+      </div>
+  </div>
+</div>
+
+
+<div id="fullscreen-preloader" class="hidden fixed inset-0 z-50 bg-white/80 backdrop-blur-xl flex flex-col items-center justify-center p-4">
+  <canvas id="neural-canvas" class="absolute inset-0 w-full h-full opacity-50"></canvas>
+  <div id="preloader-card" class="relative z-10 bg-white/95 rounded-3xl shadow-2xl p-8 max-w-2xl w-full">
+    <div class="text-center">
+        <h2 class="text-3xl font-bold mb-6 text-gray-900">AI создает вашу визуализацию...</h2>
+        <div id="transition-metrics-container" class="space-y-4"></div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const pageContainer = document.getElementById('page-container');
+  const form = document.getElementById('analysisForm');
+  // Если нет ни формы, ни блока с комментарием, ничего не делаем
+  if (!form && !document.querySelector('.animate-whoosh-in')) return;
+
+  // Если есть форма, настраиваем ее отправку
+  if (form) {
+    const saveBtn = document.getElementById('saveBtn');
+    const preloader = document.getElementById('fullscreen-preloader');
+    const preloaderCard = document.getElementById('preloader-card');
+    const resultContainer = document.getElementById('result-container');
+
+    form.addEventListener('submit', async (event) => {
+      const isFirstAnalysis = document.getElementById('muscle_mass_goal') !== null;
+
+      // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+      // Всегда показываем спиннер при нажатии на кнопку отправки
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>';
+
+      if (isFirstAnalysis) {
+        // Это ПЕРВЫЙ анализ, запускаем "магию" с визуализацией
+        event.preventDefault(); // Предотвращаем стандартную отправку только здесь
+
+        const currentMetrics = {
+            weight: parseFloat(document.getElementById('form-current-weight').innerText),
+            muscle: parseFloat(document.getElementById('form-current-muscle').innerText),
+            fat: parseFloat(document.getElementById('form-current-fat').innerText),
+        };
+        const targetMetrics = {
+            muscle: parseFloat(document.getElementById('muscle_mass_goal').value),
+            fat: parseFloat(document.getElementById('fat_mass_goal').value),
+        };
+
+        const formData = new FormData(form);
+        // Сначала отправляем данные на сохранение
+        const saveResponse = await fetch(form.action, { method: 'POST', body: formData });
+
+        if (!saveResponse.ok) {
+          alert('Ошибка при сохранении анализа.');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Сохранить и увидеть магию ✨';
+          return;
+        }
+
+        // Только после успешного сохранения запускаем анимацию и визуализацию
+        pageContainer.classList.add('animate-fade-out');
+
+        setTimeout(() => {
+          pageContainer.classList.add('hidden');
+          preloader.classList.remove('hidden');
+          preloader.classList.add('animate-fade-in');
+          preloaderCard.classList.add('animate-pulse-card');
+          startNeuralAnimation();
+          animateMetrics(currentMetrics, targetMetrics);
+          runVisualization(currentMetrics, targetMetrics);
+        }, 500);
+
+      } else {
+        // Это НЕ первый анализ.
+        // Мы НЕ вызываем event.preventDefault().
+        // Форма отправится на сервер стандартным способом. Спиннер на кнопке уже активен.
+        // Больше ничего делать не нужно.
+      }
+      // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    });
+
+    async function runVisualization(current, target) {
+        try {
+          const vizResponse = await fetch("{{ url_for('visualize_run') }}", { method: 'POST' });
+          const vizData = await vizResponse.json();
+
+          if (vizResponse.ok && vizData.success) {
+            preloader.classList.add('animate-fade-out');
+            setTimeout(() => {
+              preloader.classList.add('hidden');
+              preloaderCard.classList.remove('animate-pulse-card');
+              populateResultView(current, target, vizData.visualization);
+              pageContainer.classList.remove('animate-fade-out', 'hidden');
+              document.getElementById('confirmation-container').classList.add('hidden');
+              resultContainer.classList.remove('hidden');
+              resultContainer.classList.add('animate-whoosh-in');
+            }, 500);
+          } else { throw new Error(vizData.error || 'Неизвестная ошибка генерации'); }
+        } catch (error) {
+          alert(`Ошибка при создании визуализации: ${error.message}`);
+          window.location.href = "/profile";
+        }
+    }
+
+    function populateResultView(current, target, viz) {
+        const targetWeight = (current.weight - (current.fat - target.fat) + (target.muscle - current.muscle)).toFixed(1);
+        document.getElementById('before-metrics').innerHTML = `
+            <div class="flex justify-between"><span>⚖️ Вес:</span> <strong class="font-mono">${current.weight.toFixed(1)} кг</strong></div>
+            <div class="flex justify-between"><span>💪 Мышцы:</span> <strong class="font-mono">${current.muscle.toFixed(1)} кг</strong></div>
+            <div class="flex justify-between"><span>🧈 Жир:</span> <strong class="font-mono">${current.fat.toFixed(1)} кг</strong></div>
+        `;
+        document.getElementById('before-img').src = viz.image_current_path;
+        document.getElementById('after-metrics').innerHTML = `
+            <div class="flex justify-between"><span>⚖️ Вес:</span> <strong class="font-mono">${targetWeight} кг</strong></div>
+            <div class="flex justify-between"><span>💪 Мышцы:</span> <strong class="font-mono text-green-700">${target.muscle.toFixed(1)} кг</strong></div>
+            <div class="flex justify-between"><span>🧈 Жир:</span> <strong class="font-mono text-orange-700">${target.fat.toFixed(1)} кг</strong></div>
+        `;
+        document.getElementById('after-img').src = viz.image_target_path;
+    }
+
+    function animateMetrics(current, target) {
+        const targetWeight = (current.weight - (current.fat - target.fat) + (target.muscle - current.muscle));
+        const metrics = [
+            { label: 'Вес', before: current.weight, after: targetWeight, unit: 'кг' },
+            { label: 'Мышцы', before: current.muscle, after: target.muscle, unit: 'кг' },
+            { label: 'Жир', before: current.fat, after: target.fat, unit: 'кг' }
+        ];
+        const transitionContainer = document.getElementById('transition-metrics-container');
+        transitionContainer.innerHTML = '';
+        metrics.forEach((metric, index) => {
+            const el = document.createElement('div');
+            el.className = 'flex items-center justify-center gap-4 text-2xl font-mono animate-fade-in';
+            el.style.animationDelay = `${index * 150}ms`;
+            el.innerHTML = `
+                <span class="w-32 text-right text-gray-500">${metric.label}:</span>
+                <span class="w-24 text-center text-gray-700">${metric.before.toFixed(1)} ${metric.unit}</span>
+                <span class="text-3xl animate-pulse-glow w-8 text-center">&rarr;</span>
+                <span class="w-24 text-center text-indigo-700 font-bold" id="count-${metric.label}"></span>
+                <span class="w-32"></span>
+            `;
+            transitionContainer.appendChild(el);
+            countUp(`count-${metric.label}`, metric.after, metric.unit);
+        });
+    }
+
+    function countUp(elementId, endValue, unit) {
+        const el = document.getElementById(elementId);
+        const startValue = parseFloat(el.textContent) || (endValue > 10 ? endValue - 10 : 0);
+        const duration = 2500; let startTime = null;
+        function animation(currentTime) {
+            if (startTime === null) startTime = currentTime;
+            const progress = Math.min((currentTime - startTime) / duration, 1);
+            const easedProgress = 0.5 - 0.5 * Math.cos(progress * Math.PI);
+            const currentValue = startValue + easedProgress * (endValue - startValue);
+            el.textContent = `${currentValue.toFixed(1)} ${unit}`;
+            if (progress < 1) requestAnimationFrame(animation);
+        }
+        requestAnimationFrame(animation);
+    }
+
+    function startNeuralAnimation() {
+        const canvas = document.getElementById('neural-canvas'); if (!canvas) return;
+        const ctx = canvas.getContext('2d'); let particles = [];
+        const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+        resize(); window.addEventListener('resize', resize);
+        class Particle {
+            constructor() { this.x = Math.random() * canvas.width; this.y = Math.random() * canvas.height; this.size = Math.random() * 2 + 0.5; this.speedX = Math.random() * 0.4 - 0.2; this.speedY = Math.random() * 0.4 - 0.2; this.color = `rgba(99, 102, 241, ${Math.random() * 0.5 + 0.1})`; }
+            update() { this.x += this.speedX; this.y += this.speedY; if (this.x < 0 || this.x > canvas.width) this.x = Math.random() * canvas.width; if (this.y < 0 || this.y > canvas.height) this.y = Math.random() * canvas.height; }
+            draw() { ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); }
+        }
+        function init() { particles = []; for (let i = 0; i < 120; i++) { particles.push(new Particle()); } }
+        function animate() {
+            if (!preloader || preloader.classList.contains('hidden')) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particles.forEach(p => { p.update(); p.draw(); });
+            requestAnimationFrame(animate);
+        }
+        init(); animate();
+    }
+  }
+});
+</script>
+{% endblock %}
+

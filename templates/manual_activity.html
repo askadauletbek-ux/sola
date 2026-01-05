@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<style>
+  /* ====== Минималистично + живо ====== */
+  .page-wrap{ max-width: 720px; margin: 0 auto; padding: 2.5rem 1rem 3.5rem; }
+
+  /* Карточки */
+  .card{
+    background:#fff; border:1px solid #e2e8f0; border-radius: 1rem;
+    box-shadow: 0 10px 30px rgba(2,6,23,.06);
+  }
+
+  /* Заголовок c мягким свечением */
+  .title-glow{
+    text-shadow: 0 6px 24px rgba(59,130,246,.25);
+  }
+
+  /* Кнопки — плотные, с бликом */
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center;
+    gap:.5rem; padding:.85rem 1.15rem; border-radius:.75rem; font-weight:800;
+    border:1px solid transparent; transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+  }
+  .btn:active{ transform: translateY(1px); }
+  .btn-primary{
+    background:#16a34a; color:#fff; border-color:#16a34a;
+    box-shadow: 0 10px 24px rgba(22,163,74,.25);
+    position:relative; overflow:hidden;
+  }
+  .btn-primary:hover{ background:#15803d; border-color:#15803d; }
+  .btn-primary::after{
+    content:""; position:absolute; inset:-40% -10%;
+    background: linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+    transform: rotate(10deg) translateX(-120%);
+    transition: transform .6s ease;
+  }
+  .btn-primary:hover::after{ transform: rotate(10deg) translateX(120%); }
+
+  .btn-dark{
+    background:#0f172a; color:#fff; border-color:#0f172a;
+    box-shadow: 0 10px 24px rgba(2,6,23,.25);
+  }
+  .btn-dark:hover{ background:#111827; border-color:#111827; }
+
+  /* Инпуты */
+  .inp{
+    width:100%; padding: .85rem 1rem; border-radius: .75rem;
+    border:1px solid #e2e8f0; background:#fff;
+    transition: border-color .2s ease, box-shadow .2s ease, transform .12s ease;
+  }
+  .inp:focus{
+    outline: none; border-color:#60a5fa;
+    box-shadow: 0 6px 18px rgba(59,130,246,.15), 0 0 0 4px rgba(59,130,246,.18);
+    transform: translateY(-1px);
+  }
+
+  /* Живые анимации появления */
+  .reveal{ opacity:0; transform: translateY(14px) scale(.98); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .inview{ opacity:1 !important; transform:none !important; }
+
+  /* Аккордеон формы */
+  .collapse{ overflow:hidden; max-height:0; opacity:0; transform: translateY(-6px);
+             transition: max-height .45s ease, opacity .35s ease, transform .35s ease; }
+  .collapse.open{ max-height:520px; opacity:1; transform:none; }
+
+  /* Плашки-метрики */
+  .metric{
+    background: linear-gradient(180deg,#fff,#f8fafc); border:1px solid #e2e8f0;
+    border-radius:.9rem; padding:1rem; display:flex; align-items:center; gap:.9rem;
+  }
+  .metric .ico{
+    width:42px; height:42px; border-radius: .75rem; display:flex; align-items:center; justify-content:center;
+    background:#ecfeff; color:#0369a1; font-size:1.25rem; box-shadow: inset 0 0 0 1px #bae6fd;
+  }
+  .metric .val{ font-size:1.25rem; font-weight:800; color:#0f172a; }
+  .metric .lbl{ font-size:.8rem; color:#475569; }
+
+  /* Ховер-покачивание для карточек */
+  .hover-float{ transition: transform .25s ease, box-shadow .25s ease; }
+  .hover-float:hover{ transform: translateY(-3px); box-shadow: 0 16px 36px rgba(2,6,23,.10); }
+</style>
+
+<div class="page-wrap">
+  <h1 class="text-2xl md:text-3xl font-extrabold text-center mb-6 title-glow reveal">🚶 Ввод активности вручную</h1>
+
+  {% set act = existing_activity if existing_activity is defined else (today_activity if today_activity is defined else none) %}
+
+  {% if act %}
+    <!-- Уже есть данные за сегодня -->
+    <div class="card p-5 md:p-6 mb-5 reveal hover-float">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">✅</div>
+          <div>
+            <div class="text-slate-900 font-bold">Активность сохранена</div>
+            <div class="text-slate-500 text-sm">
+              {% if act.date %}обновлено: {{ act.date.strftime('%d.%m.%Y') }}{% else %}актуально{% endif %}
+            </div>
+          </div>
+        </div>
+
+        <button id="toggleFormBtn" class="btn btn-dark">
+          ➕ Добавить новую активность
+        </button>
+      </div>
+
+      <hr class="my-4 border-slate-200">
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="metric reveal inview">
+          <div class="ico">👟</div>
+          <div>
+            <div class="val">{{ act.steps or 0 }}</div>
+            <div class="lbl">Шаги</div>
+          </div>
+        </div>
+        <div class="metric reveal inview" style="transition-delay:.08s">
+          <div class="ico">🔥</div>
+          <div>
+            <div class="val">{{ act.active_kcal or 0 }}</div>
+            <div class="lbl">Активные калории (ккал)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- Форма: если данных нет — показываем сразу; если есть — под кнопкой -->
+  <div id="formWrap" class="card p-6 reveal hover-float {% if not act %}inview{% endif %} {% if act %}collapse{% endif %} {% if not act %}open{% endif %}">
+    <form method="POST" class="space-y-5">
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Шаги</label>
+        <input type="number" name="steps" min="0" inputmode="numeric" class="inp" placeholder="Например, 8000" required>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Активные калории (ккал)</label>
+        <input type="number" name="active_kcal" min="0" inputmode="numeric" class="inp" placeholder="Например, 450">
+      </div>
+
+      <button type="submit" class="w-full btn btn-primary">💾 Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Появление блоков
+  (function(){
+    const items = document.querySelectorAll('.reveal');
+    if(!('IntersectionObserver' in window) || !items.length){
+      items.forEach(el => el.classList.add('inview'));
+      return;
+    }
+    const io = new IntersectionObserver((entries)=>{
+      entries.forEach(e=>{
+        if(e.isIntersecting){
+          e.target.classList.add('inview');
+          io.unobserve(e.target);
+        }
+      });
+    }, { rootMargin:'0px 0px -10% 0px', threshold:.12 });
+    items.forEach(el => io.observe(el));
+  })();
+
+  // Тоггл формы, если уже есть активность
+  (function(){
+    const btn = document.getElementById('toggleFormBtn');
+    const wrap = document.getElementById('formWrap');
+    if(!btn || !wrap) return;
+    btn.addEventListener('click', ()=>{
+      wrap.classList.toggle('open');
+      // Снимаем/добавляем collapse, чтобы сохранить плавность max-height
+      if(wrap.classList.contains('collapse')) {
+        // уже свернутый — просто открыть
+        wrap.classList.add('open');
+      } else {
+        // если из начального состояния без collapse — добавим его для корректной анимации
+        wrap.classList.add('collapse');
+        requestAnimationFrame(()=>wrap.classList.add('open'));
+      }
+    });
+  })();
+</script>
+
+{% endblock %}

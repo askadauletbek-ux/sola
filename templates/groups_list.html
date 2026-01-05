@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8 max-w-3xl"> {# Reduced max-width for the overall block #}
+  <div class="bg-white shadow-lg rounded-2xl p-6"> {# More rounded corners for the main block #}
+    <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b-2 border-blue-300 pb-2 text-center">Группы</h1>
+
+    {% if current_user.is_trainer %}
+      {% if group %}
+        <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-xl text-center" role="alert">
+          <p class="font-semibold text-lg mb-2">У вас уже есть группа:</p>
+          <a href="{{ url_for('group_detail', group_id=group.id) }}" class="text-blue-800 hover:text-blue-600 underline text-2xl font-bold">
+            {{ group.name }}
+          </a>
+        </div>
+      {% else %}
+        <div class="text-center mt-8">
+          <a href="{{ url_for('create_group') }}" class="inline-block bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl transition duration-300 ease-in-out transform hover:scale-105 shadow-md">
+            Создать новую группу
+          </a>
+        </div>
+      {% endif %}
+    {% else %}
+      {% if groups %}
+        <div class="space-y-4"> {# Ensures vertical stacking and spacing #}
+          {% for g in groups %}
+            <a href="{{ url_for('group_detail', group_id=g.id) }}" class="block w-full bg-gray-50 hover:bg-blue-50 p-4 rounded-xl shadow-sm border border-gray-200 hover:border-blue-300 transition duration-200 ease-in-out transform hover:-translate-y-1">
+              <h2 class="text-lg font-semibold text-gray-800 mb-1">{{ g.name }}</h2>
+              <p class="text-sm text-gray-600">Тренер: <span class="font-medium text-gray-700">{{ g.trainer.name }}</span></p>
+              <p class="text-xs text-blue-500 mt-2">Нажмите для подробностей &rarr;</p>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-xl text-center" role="alert">
+          <p class="font-semibold text-lg mb-2">Пока нет доступных групп.</p>
+          <p class="text-sm">Пожалуйста, проверьте позже или свяжитесь с администратором.</p>
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-6" x-data="broadcast()">
+  <h1 class="text-2xl font-bold mb-4">📣 Рассылка в Telegram</h1>
+  <form method="post" class="bg-white rounded-xl shadow p-4 space-y-3">
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" name="only_active" class="border rounded" x-model="onlyActive">
+      Только активные подписки
+    </label>
+
+    <textarea name="text" rows="8" x-model="text"
+              class="w-full border rounded-lg px-3 py-3"
+              placeholder="Текст сообщения" required></textarea>
+
+    <div class="flex items-center justify-between text-sm text-gray-500">
+      <div>Символов: <b x-text="text.length"></b></div>
+      <div :class="text.length > 4096 ? 'text-red-600' : ''">Лимит Telegram: 4096</div>
+    </div>
+
+    <div class="bg-gray-50 rounded-lg p-3">
+      <div class="text-xs uppercase text-gray-400 mb-1">Предпросмотр</div>
+      <div class="border rounded-lg bg-white p-3 whitespace-pre-wrap text-sm" x-text="text || '...'"></div>
+    </div>
+
+    <button :disabled="text.length==0 || text.length>4096"
+            class="px-3 py-2 rounded-lg text-white"
+            :class="(text.length==0 || text.length>4096) ? 'bg-gray-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'">
+      Отправить
+    </button>
+  </form>
+</div>
+
+<script>
+function broadcast(){
+  return { text:'', onlyActive:false }
+}
+</script>
+{% endblock %}

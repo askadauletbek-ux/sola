@@ -1,0 +1,283 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+  /* --- Preloader Styles --- */
+  #preloader {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background-color: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.3s ease;
+  }
+  .spinner {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: 6px solid #e5e7eb; /* gray-200 */
+    border-top-color: #16a34a; /* green-600 */
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+
+<div id="preloader" class="hidden pointer-events-none">
+  <div class="spinner"></div>
+</div>
+
+<div class="container mx-auto px-4 py-10">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div>
+            <h1 class="text-3xl font-extrabold text-slate-900">
+                🛒 Корзина продуктов
+            </h1>
+            <span class="block text-lg font-normal text-slate-500 mt-1">
+                для диеты от {{ diet.date.strftime('%d.%m.%Y') }}
+            </span>
+        </div>
+        <div id="buildContainer" class="flex items-center gap-3">
+             <button id="buildCartBtn" class="btn btn-primary gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104l-2.28 2.28-1.297 1.297A3.75 3.75 0 003.75 9.75c0 1.063.426 2.023 1.123 2.72.797.797 1.657 1.23 2.72 1.123l1.297-1.297 2.28-2.28m9-9l-2.28 2.28-1.297 1.297A3.75 3.75 0 0117.25 9.75c0 1.063-.426 2.023-1.123 2.72-.797.797-1.657 1.23-2.72 1.123l-1.297-1.297-2.28-2.28m0 0l2.28 2.28m-2.28-2.28l-2.28-2.28m2.28 2.28l-1.297 1.297m1.297-1.297l1.297-1.297m0 0a3.75 3.75 0 00-5.303 0l-1.297 1.297L6.03 7.53A3.75 3.75 0 019.75 3.75c1.063 0 2.023.426 2.72 1.123l1.297 1.297 2.28 2.28m-3.577 3.577l-2.28-2.28" />
+                </svg>
+                Сгенерировать AI
+            </button>
+        </div>
+    </div>
+
+    <div class="bg-white p-6 rounded-xl shadow-lg mb-8">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <h2 class="text-xl font-bold text-slate-900">Управление</h2>
+              <span id="cartStatus" class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700">Статус: —</span>
+            </div>
+            <div id="actionsContainer" class="flex items-center gap-3 hidden">
+                <button id="sendTgBtn" class="btn btn-info gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M9.78 18.65l.28-4.23l7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3L3.64 12c-.88-.25-.89-1.39.2-1.75l13.6-5.3c.73-.27 1.44.17 1.25.92l-2.6 12.08c-.24.93-1.04 1.15-1.7.71l-4.24-3.51l-2.05 2.02a.98.98 0 0 1-1.16.11z"/></svg>
+                    Отправить в Telegram
+                </button>
+                <button id="resetCartBtn" class="btn btn-outline btn-error">Сбросить</button>
+            </div>
+        </div>
+        <div id="cartHint" class="mt-3 text-sm text-slate-500">
+            Нажмите "Сгенерировать", чтобы ИИ подобрал продукты и сформировал ссылки для покупки.
+        </div>
+        <div id="cartFlash" class="mt-4 text-sm font-medium hidden"></div>
+    </div>
+
+    <div id="cartContent" class="space-y-8">
+      </div>
+</div>
+
+<script>
+(function(){
+  // --- CONFIG ---
+  const dietId = {{ diet.id }};
+
+  // --- DOM ELEMENTS ---
+  const $preloader = document.getElementById('preloader');
+  const $status = document.getElementById('cartStatus');
+  const $btnBuild = document.getElementById('buildCartBtn');
+  const $btnReset = document.getElementById('resetCartBtn');
+  const $btnTg = document.getElementById('sendTgBtn');
+  const $flash = document.getElementById('cartFlash');
+  const $content = document.getElementById('cartContent');
+  const $hint = document.getElementById('cartHint');
+  const $buildContainer = document.getElementById('buildContainer');
+  const $actionsContainer = document.getElementById('actionsContainer');
+
+  // --- UI HELPERS ---
+  const showLoader = () => {
+    $preloader.classList.remove('hidden', 'pointer-events-none');
+    $preloader.style.opacity = '1';
+  };
+  const hideLoader = () => {
+    $preloader.classList.add('pointer-events-none');
+    $preloader.style.opacity = '0';
+    setTimeout(() => $preloader.classList.add('hidden'), 300);
+  };
+
+  const setStatus = (text, tone = 'default') => {
+    $status.textContent = 'Статус: ' + text;
+    const tones = {
+      ok: 'bg-green-100 text-green-800', warn: 'bg-yellow-100 text-yellow-800',
+      err: 'bg-red-100 text-red-800', default: 'bg-slate-100 text-slate-700'
+    };
+    $status.className = `text-xs px-2 py-1 rounded-full font-semibold ${tones[tone]}`;
+  };
+
+  const showFlash = (msg, kind = 'info') => {
+    const kinds = {
+      info: 'text-slate-600', ok: 'text-green-600',
+      err: 'text-red-600', warn: 'text-yellow-600'
+    };
+    $flash.className = `mt-4 text-sm font-medium ${kinds[kind]}`;
+    $flash.textContent = msg || '';
+    $flash.classList.toggle('hidden', !msg);
+  };
+
+  const toggleControls = (hasCart) => {
+    $buildContainer.classList.toggle('hidden', hasCart);
+    $actionsContainer.classList.toggle('hidden', !hasCart);
+    $hint.classList.toggle('hidden', hasCart);
+  };
+
+  // --- RENDERER ---
+  const renderCart = (itemsByMeal) => {
+    const mealOrder = [
+      ['breakfast', '🍳 Завтрак'], ['lunch', '🍲 Обед'],
+      ['dinner', '🍝 Ужин'], ['snack', '🍎 Перекус'], ['other', 'Прочее']
+    ];
+    let totalCount = 0;
+    let html = '';
+
+    mealOrder.forEach(([key, title]) => {
+      const items = (itemsByMeal && itemsByMeal[key]) || [];
+      if (items.length === 0) return;
+      totalCount += items.length;
+
+      const itemCards = items.map(it => {
+        const name = it.product_name || 'Товар';
+        const qty = it.quantity_packs ?? 1;
+        const unit = it.unit || 'шт';
+        const totalGr = it.total_grams;
+        const price = it.price ? parseFloat(it.price).toLocaleString('ru-KZ') : null;
+        const kaspiUrl = (it.kaspi_url || '').trim();
+        const kaspiQuery = (it.kaspi_query || name).trim();
+        const link = kaspiUrl || `https://kaspi.kz/shop/search/?text=${encodeURIComponent(kaspiQuery)}`;
+
+        return `
+          <div class="transition-transform duration-300 ease-in-out hover:-translate-y-1">
+            <a href="${link}" target="_blank" rel="noopener noreferrer"
+               class="flex items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 bg-white hover:border-green-500 hover:shadow-lg h-full">
+              <div>
+                <div class="font-semibold text-slate-800 leading-tight">${name}</div>
+                <div class="text-sm text-slate-500 mt-2 space-x-3">
+                  ${ totalGr ? `<span>~${totalGr} г</span>` : '' }
+                  <span class="font-bold text-slate-700">${qty} ${unit}</span>
+                  ${ price ? `<span class="font-semibold text-green-700">≈ ${price} ₸</span>` : '' }
+                </div>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          </div>
+        `;
+      }).join('');
+
+      html += `
+        <div>
+          <h3 class="text-2xl font-bold text-slate-800 mb-4 pb-2 border-b-2 border-slate-200">${title}</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            ${itemCards}
+          </div>
+        </div>
+      `;
+    });
+
+    $content.innerHTML = html || `<div class="text-center py-12">
+        <p class="text-slate-500">Корзина пуста.</p>
+        <p class="text-slate-400 text-sm mt-1">Нажмите "Сгенерировать", чтобы начать.</p>
+    </div>`;
+
+    toggleControls(totalCount > 0);
+    setStatus(totalCount > 0 ? `Готово (${totalCount} поз.)` : 'Пусто', totalCount > 0 ? 'ok' : 'warn');
+    showFlash(totalCount > 0 ? 'Корзина сформирована. Теперь можно отправить ссылки в Telegram.' : '', totalCount > 0 ? 'ok' : 'info');
+  };
+
+  // --- API CALLER ---
+  const apiCall = async (endpoint, options = {}, button = null) => {
+      if (button) button.disabled = true;
+      showLoader();
+      try {
+          const response = await fetch(endpoint, options);
+          const data = await response.json();
+          if (!response.ok || data.ok === false) {
+              throw new Error(data.message || `HTTP ошибка: ${response.status}`);
+          }
+          return data;
+      } catch (error) {
+          console.error(`API вызов ${endpoint} провалился:`, error);
+          throw error;
+      } finally {
+          if (button) button.disabled = false;
+          hideLoader();
+      }
+  };
+
+  // --- API FUNCTIONS ---
+  const loadCart = async () => {
+    try {
+      $content.innerHTML = ''; // Clear content before loading
+      const data = await apiCall(`/shopping/list?diet_id=${dietId}`);
+      renderCart(data.items_by_meal || {});
+    } catch(e) {
+      setStatus('Ошибка загрузки', 'err');
+      showFlash(e.message, 'err');
+      $content.innerHTML = '';
+      toggleControls(false);
+    }
+  };
+
+  const buildCart = async () => {
+    try {
+      $content.innerHTML = ''; // Clear content before building
+      setStatus('Генерация...', 'warn');
+      showFlash('Подбираем продукты и ссылки с помощью ИИ. Это может занять до минуты...', 'info');
+      toggleControls(true);
+      const data = await apiCall('/shopping/build', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','Accept':'application/json'},
+        body: JSON.stringify({ diet_id: dietId })
+      }, $btnBuild);
+      renderCart(data.items_by_meal || {});
+    } catch(e) {
+      setStatus('Ошибка генерации', 'err');
+      showFlash(`Не удалось создать корзину: ${e.message}`, 'err');
+      $content.innerHTML = '';
+      toggleControls(false);
+    }
+  };
+
+  const resetCart = async () => {
+    if(!confirm('Вы уверены, что хотите полностью очистить эту корзину?')) return;
+    try {
+      setStatus('Очистка...', 'warn');
+      showFlash('Удаляем все позиции из корзины...', 'info');
+      await apiCall('/shopping/reset', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ diet_id: dietId })
+      }, $btnReset);
+      renderCart({});
+    } catch(e) {
+      setStatus('Ошибка очистки', 'err');
+      showFlash(`Не удалось очистить корзину: ${e.message}`, 'err');
+    }
+  };
+
+  const sendToTelegram = async () => {
+      try {
+          showFlash('Отправляем ссылки в ваш Telegram...', 'info');
+          const data = await apiCall(`/shopping/cart/${dietId}/send-telegram`, { method: 'POST' }, $btnTg);
+          showFlash(data.message, 'ok');
+      } catch (e) {
+          showFlash(`Ошибка отправки в Telegram: ${e.message}`, 'err');
+      }
+  };
+
+  // --- INIT ---
+  $btnBuild?.addEventListener('click', buildCart);
+  $btnReset?.addEventListener('click', resetCart);
+  $btnTg?.addEventListener('click', sendToTelegram);
+
+  loadCart();
+})();
+</script>
+{% endblock %}

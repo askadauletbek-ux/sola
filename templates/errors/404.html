@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-md w-full space-y-8 text-center">
+    <div>
+      <h1 class="text-9xl font-extrabold text-indigo-300">404</h1>
+      <h2 class="mt-2 text-3xl font-bold text-gray-900">
+        Страница не найдена
+      </h2>
+      <p class="mt-4 text-gray-600">
+        Ой! Похоже, вы сбились с пути. Страницы по этому адресу не существует.
+      </p>
+    </div>
+    <div class="mt-6">
+      <a href="{{ url_for('profile') if session.user_id else url_for('index') }}"
+         class="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-full text-white bg-indigo-600 hover:bg-indigo-700 transition">
+        <i class="bi bi-house-door-fill mr-2"></i>
+        Вернуться в профиль
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Вход | Kilogr.app</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  {# --- Редирект авторизованным пользователям --- #}
+  {% if session.user_id or (current_user and current_user.is_authenticated) %}
+    <script>
+      // Быстрый редирект на клиенте
+      window.location.replace('/profile');
+    </script>
+    <noscript>
+      <!-- Фолбэк, если отключен JS -->
+      <meta http-equiv="refresh" content="0; url=/profile">
+    </noscript>
+  {% endif %}
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#1E40AF', // Darker Blue for better contrast
+            accent: '#2563EB',
+            light: '#F9FAFB',  // Lighter gray
+            dark: '#111827',
+          },
+          fontFamily: {
+            sans: ['"Inter"', 'sans-serif'],
+          },
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Анимация появления */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in {
+      animation: fadeIn 0.6s ease-out forwards;
+    }
+    /* Стили для кастомного фона */
+    .aurora-background::before {
+      content: '';
+      position: absolute;
+      top: -20%;
+      left: -20%;
+      width: 400px;
+      height: 400px;
+      background-image: radial-gradient(circle, rgba(59, 130, 246, 0.3), transparent 70%);
+      filter: blur(100px);
+      z-index: 0;
+    }
+    .aurora-background::after {
+      content: '';
+      position: absolute;
+      bottom: -20%;
+      right: -20%;
+      width: 400px;
+      height: 400px;
+      background-image: radial-gradient(circle, rgba(30, 64, 175, 0.3), transparent 70%);
+      filter: blur(120px);
+      z-index: 0;
+    }
+  </style>
+</head>
+<body class="bg-light min-h-screen flex items-center justify-center font-sans p-4 relative overflow-hidden aurora-background">
+
+<div class="relative z-10 w-full max-w-4xl grid md:grid-cols-2 bg-white/70 backdrop-blur-xl border border-gray-200 shadow-2xl rounded-3xl overflow-hidden animate-fade-in">
+
+ <div class="hidden md:flex flex-col justify-center p-12 bg-gray-50/50">
+  <div class="flex items-center gap-3">
+    <img
+      src="{{ url_for('static', filename='logo.png') }}"
+      alt="Kilogr.app"
+      class="h-10 md:h-12 w-auto object-contain"
+      width="1730"
+      height="379"
+      loading="lazy"
+    />
+  </div>
+  <h2 class="text-3xl font-bold text-dark mt-8">Ваш личный путь к здоровью</h2>
+  <p class="text-gray-600 mt-4">Отслеживайте свой прогресс, достигайте целей и становитесь лучшей версией себя вместе с нами.</p>
+</div>
+
+  <div class="w-full p-8 sm:p-12">
+    <h1 class="text-3xl font-bold text-dark text-center">Вход</h1>
+
+    {% if error %}
+      <div class="text-red-600 bg-red-100 text-sm text-center p-3 rounded-lg my-4 animate-fade-in">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <div class="mt-6">
+      <a href="#" class="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-300 rounded-xl transition-colors hover:bg-gray-50">
+        <svg class="w-6 h-6" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="m24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.223 0-9.657-3.657-11.303-8.591l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C42.091 35.636 44 30.138 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
+        <span class="text-gray-700 font-medium">Войти через Google</span>
+      </a>
+    </div>
+
+    <div class="my-6 flex items-center text-sm">
+      <hr class="flex-grow border-gray-300">
+      <span class="mx-4 text-gray-400">или</span>
+      <hr class="flex-grow border-gray-300">
+    </div>
+
+    <form method="POST" class="space-y-5">
+      <div>
+        <label for="email" class="sr-only">Email</label>
+        <div class="relative">
+          <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+            <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M3 4a2 2 0 00-2 2v1.161l8.441 4.221a1.25 1.25 0 001.118 0L19 7.162V6a2 2 0 00-2-2H3z" />
+              <path d="M19 8.839l-7.77 3.885a2.75 2.75 0 01-2.46 0L1 8.839V14a2 2 0 002 2h14a2 2 0 002-2V8.839z" />
+            </svg>
+          </div>
+          <input id="email" type="email" name="email" placeholder="you@example.com"
+                 class="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent transition" required>
+        </div>
+      </div>
+
+      <div>
+        <label for="password" class="sr-only">Пароль</label>
+        <div class="relative">
+          <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+            <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" />
+            </svg>
+          </div>
+          <input id="password" type="password" name="password" placeholder="••••••••"
+                 class="w-full pl-10 pr-12 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent transition" required>
+          <button type="button" id="togglePassword" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-500 hover:text-dark">
+            <svg id="eye-open" class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                <path fill-rule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.18l.88-1.886a11.954 11.954 0 0116.912 0l.88 1.886a1.651 1.651 0 010 1.18l-.88 1.886a11.954 11.954 0 01-16.912 0l-.88-1.886zM10 15a5 5 0 100-10 5 5 0 000 10z" clip-rule="evenodd" />
+            </svg>
+            <svg id="eye-closed" class="h-5 w-5 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M3.28 2.22a.75.75 0 00-1.06 1.06l14.5 14.5a.75.75 0 101.06-1.06l-1.745-1.745a10.029 10.029 0 003.3-4.38 1.651 1.651 0 000-1.18l-.88-1.886a11.953 11.953 0 00-5.353-4.474l-2.06-2.06L3.28 2.22zM10 12.5a2.5 2.5 0 01-2.5-2.5 1 1 0 00-1-1 .75.75 0 000 1.5.5.5 0 01.5.5 2.5 2.5 0 01-3.086 2.414l-1.28-1.28A5 5 0 0110 7.5a4.958 4.958 0 014.303 2.53l-1.579 1.58A2.5 2.5 0 0010 12.5z" />
+                <path d="M12.944 14.944l.159.158a.75.75 0 01-1.06 1.06l-1.524-1.525a3.734 3.734 0 01-1.49-1.585l-.342-.728a.75.75 0 011.06-1.06l.342.728a2.23 2.23 0 001.49 1.585l1.525 1.525z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit"
+              class="w-full bg-primary text-white py-3 rounded-xl font-medium text-lg transition-all duration-300 hover:bg-accent hover:shadow-lg hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent">
+        Войти
+      </button>
+    </form>
+
+    <p class="mt-8 text-center text-sm text-gray-500">
+      Нет аккаунта?
+      <a href="/register" class="font-medium text-accent hover:underline transition">Зарегистрироваться</a>
+    </p>
+  </div>
+</div>
+
+<script>
+  const togglePassword = document.getElementById('togglePassword');
+  const password = document.getElementById('password');
+  const eyeOpen = document.getElementById('eye-open');
+  const eyeClosed = document.getElementById('eye-closed');
+
+  togglePassword.addEventListener('click', function () {
+    const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+    password.setAttribute('type', type);
+    eyeOpen.classList.toggle('hidden');
+    eyeClosed.classList.toggle('hidden');
+  });
+</script>
+
+</body>
+</html>

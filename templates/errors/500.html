@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-md w-full space-y-8 text-center">
+    <div>
+      <i class="bi bi-wrench-adjustable text-8xl text-slate-300"></i>
+      <h1 class="mt-4 text-3xl font-bold text-gray-900">Что-то пошло не так</h1>
+      <p class="mt-4 text-gray-600">
+        На сервере произошла ошибка. Мы уже получили уведомление и работаем над решением. Пожалуйста, попробуйте зайти позже.
+      </p>
+    </div>
+    <div class="mt-6">
+      <a href="{{ url_for('profile') if session.user_id else url_for('index') }}"
+         class="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-full text-white bg-indigo-600 hover:bg-indigo-700 transition">
+        <i class="bi bi-house-door-fill mr-2"></i>
+        На главную
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

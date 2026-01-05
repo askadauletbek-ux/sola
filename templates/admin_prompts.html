@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="{showBody:true}">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">🧩 Промпты</h1>
+    <button class="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm" @click="showBody=!showBody">
+  <span x-text="showBody ? 'Скрыть новый' : 'Показать новый'"></span>
+</button>
+
+  </div>
+
+  <div class="grid lg:grid-cols-2 gap-6">
+    <!-- Создание -->
+    <div class="bg-white rounded-xl shadow p-4" x-show="showBody">
+      <h2 class="font-semibold mb-2">Создать/сохранить версию</h2>
+      <form method="post" class="space-y-3">
+        <div class="grid md:grid-cols-2 gap-3">
+          <input class="w-full border rounded-lg px-3 py-2" name="name" placeholder="name (например: meal_photo)" required>
+          <input class="w-full border rounded-lg px-3 py-2" type="number" name="version" placeholder="version" required>
+        </div>
+        <textarea class="w-full border rounded-lg px-3 py-3 min-h-[220px]" name="body" placeholder="Текст системного промпта" required></textarea>
+        <div class="flex items-center gap-3">
+          <button class="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Сохранить</button>
+          <span class="text-xs text-gray-500">Сначала сохрани, потом активируй нужную версию в списке справа</span>
+        </div>
+      </form>
+    </div>
+
+    <!-- Список -->
+    <div class="bg-white rounded-xl shadow p-0 overflow-hidden">
+      <div class="px-4 py-3 border-b">
+        <div class="text-sm text-gray-600">Сохранённые шаблоны</div>
+      </div>
+      <div class="divide-y max-h-[640px] overflow-auto">
+        {% for p in prompts %}
+          <div class="p-4 flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <div class="font-semibold truncate">{{ p.name }}</div>
+                <div class="text-xs px-2 py-0.5 rounded-full"
+                     style="background: {{ p.is_active and '#DCFCE7' or '#F1F5F9' }}; color: {{ p.is_active and '#166534' or '#334155' }};">
+                  v{{ p.version }}{{ p.is_active and ' • активен' or '' }}
+                </div>
+              </div>
+              <details class="mt-2">
+                <summary class="cursor-pointer text-sm text-gray-600">Показать текст</summary>
+                <pre class="mt-2 text-sm whitespace-pre-wrap">{{ p.body }}</pre>
+              </details>
+            </div>
+            <form method="post" action="{{ url_for('admin_prompts_activate', pid=p.id) }}" class="shrink-0">
+              <button class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Активировать</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

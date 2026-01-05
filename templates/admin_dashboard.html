@@ -1,0 +1,477 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<!-- Пробрасываем данные из Jinja в JS (безопасно) -->
+<script>
+  window.__users = [
+    {% for u in users %}
+    {
+      id: {{ u.id }},
+      name: {{ u.name|tojson }},
+      email: {{ u.email|tojson }},
+      is_trainer: {{ 'true' if u.is_trainer else 'false' }},
+      has_subscription: {{ 'true' if u.has_subscription else 'false' }},
+      meal_today: {{ 'true' if statuses.get(u.id, {}).get('meal') else 'false' }},
+      activity_today: {{ 'true' if statuses.get(u.id, {}).get('activity') else 'false' }}
+    }{{ '' if loop.last else ',' }}
+    {% endfor %}
+  ];
+  window.__details = {{ details|tojson }};
+  window.__urls = {
+    detail: "{{ url_for('admin_user_detail', user_id=0) }}".replace(/0$/, ""),
+    admin_applications_list: "{{ url_for('admin_applications_list') }}",
+    delete: "{{ url_for('admin_delete_user', user_id=0) }}".replace(/0$/, ""),
+    impersonate: "{{ url_for('admin_impersonate_user', user_id=0) }}".replace(/0$/, ""),
+    magic: "{{ url_for('admin_send_magic_link', user_id=0) }}".replace(/0$/, ""),
+    create: "{{ url_for('admin_create_user') }}",
+    groups: "{{ url_for('admin_groups_list') }}",
+    squads_dist: "{{ url_for('admin_squads_distribution') }}",
+    aiq: "{{ url_for('admin_ai_queue') }}",
+    jobs: "{{ url_for('admin_jobs') }}",
+    prompts: "{{ url_for('admin_prompts') }}",
+    broadcast: "{{ url_for('admin_broadcast') }}",
+    audit: "{{ url_for('admin_audit') }}",
+    reports: "{{ url_for('admin_reports') }}",
+    analytics: "{{ url_for('admin_analytics_page') }}"
+  };
+</script>
+
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="adminPage()">
+  <h1 class="text-3xl font-bold mb-6">Админ-панель</h1>
+
+  <!-- Верхняя панель действий -->
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <p class="text-lg text-gray-700">
+      Пользователи: <span class="font-semibold" x-text="filtered.length"></span>
+      <span class="text-gray-400">/</span>
+      <span class="text-gray-500" x-text="rows.length"></span>
+    </p>
+
+    <div class="flex flex-wrap gap-2">
+      <a :href="urls.create" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">➕ Создать</a>
+      <a :href="urls.admin_applications_list" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"> Заявки</a>
+      <a :href="urls.groups" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900">👥 Группы</a>
+      <a :href="urls.squads_dist" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700">🛡️ Распределение</a>
+      <a :href="urls.aiq" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700">🤖 AI-очередь</a>
+      <a :href="urls.jobs" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700">⏱ Планировщик</a>
+      <a :href="urls.prompts" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700">🧩 Промпты</a>
+      <a :href="urls.broadcast" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">📣 Рассылка</a>
+      <a :href="urls.reports" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700">🛡️ Жалобы</a>
+      <a :href="urls.audit" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-600 text-white hover:bg-gray-700">📜 Аудит</a>
+      <a :href="urls.analytics" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700">📈 Аналитика</a>
+    </div>
+  </div>
+
+  <!-- Фильтры/поиск -->
+  <div class="bg-white rounded-lg shadow p-4 mb-4">
+    <div class="flex flex-col md:flex-row gap-3 md:items-end">
+      <div class="flex-1">
+        <label class="block text-xs text-gray-500 mb-1">Поиск</label>
+        <input x-model.debounce.250ms="q"
+               type="text"
+               placeholder="Имя, email, ID…"
+               class="w-full border rounded-lg px-3 py-2">
+      </div>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Подписка</label>
+        <select x-model="filters.sub" class="border rounded-lg px-3 py-2">
+          <option value="any">Любая</option>
+          <option value="active">Активна</option>
+          <option value="none">Нет</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Тренер</label>
+        <select x-model="filters.trainer" class="border rounded-lg px-3 py-2">
+          <option value="any">Любой</option>
+          <option value="yes">Да</option>
+          <option value="no">Нет</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Питание (сегодня)</label>
+        <select x-model="filters.meal" class="border rounded-lg px-3 py-2">
+          <option value="any">Любое</option>
+          <option value="ok">Есть</option>
+          <option value="no">Нет</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Активность (сегодня)</label>
+        <select x-model="filters.activity" class="border rounded-lg px-3 py-2">
+          <option value="any">Любая</option>
+          <option value="ok">Есть</option>
+          <option value="no">Нет</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">На странице</label>
+        <select x-model.number="pageSize" class="border rounded-lg px-3 py-2">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="99999">Все</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Панель массовых действий -->
+    <div class="mt-3 flex flex-wrap items-center gap-2" x-show="selected.size || onlySelected">
+      <span class="text-sm text-gray-600">
+        Выбрано: <span class="font-semibold" x-text="selected.size"></span>
+        <template x-if="onlySelected">
+          <span> • показаны только выбранные</span>
+        </template>
+      </span>
+      <button @click="copyEmails()" class="px-3 py-1.5 rounded bg-slate-800 text-white text-sm hover:bg-slate-900">Скопировать email’ы</button>
+      <button @click="exportCSV()" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700">Экспорт CSV</button>
+      <button @click="onlySelected = !onlySelected" class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+              x-text="onlySelected ? 'Показать всех' : 'Показать только выбранных'"></button>
+      <button @click="clearSelection()" class="px-3 py-1.5 rounded bg-gray-100 text-sm hover:bg-gray-200">Сбросить выбор</button>
+    </div>
+  </div>
+
+  <!-- Таблица -->
+  <div class="overflow-x-auto bg-white shadow-md rounded-lg">
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <th class="px-3 py-3 w-10">
+            <input type="checkbox" :checked="allOnPageSelected" @change="toggleSelectAllOnPage($event)">
+          </th>
+          <th class="px-6 py-3 cursor-pointer" @click="toggleSort('id')">
+            ID <span x-text="sortIcon('id')"></span>
+          </th>
+          <th class="px-6 py-3 cursor-pointer" @click="toggleSort('name')">
+            Имя <span x-text="sortIcon('name')"></span>
+          </th>
+          <th class="px-6 py-3 cursor-pointer" @click="toggleSort('email')">
+            Email <span x-text="sortIcon('email')"></span>
+          </th>
+          <th class="px-6 py-3 text-center cursor-pointer" @click="toggleSort('is_trainer')">
+            Тренер <span x-text="sortIcon('is_trainer')"></span>
+          </th>
+          <th class="px-6 py-3 text-center cursor-pointer" @click="toggleSort('has_subscription')">
+            Подписка <span x-text="sortIcon('has_subscription')"></span>
+          </th>
+          <th class="px-6 py-3 text-center">Питание (сегодня)</th>
+          <th class="px-6 py-3 text-center">Активность (сегодня)</th>
+          <th class="px-6 py-3 text-center">Действия</th>
+        </tr>
+      </thead>
+
+      <tbody class="divide-y divide-gray-200">
+        <template x-for="row in pageRows" :key="row.id">
+          <tbody>
+            <!-- основная строка -->
+            <tr class="hover:bg-gray-50 transition"
+                :class="{
+                  'bg-green-50': row.has_subscription && expanded !== row.id,
+                  'bg-gray-50': expanded === row.id
+                }">
+              <td class="px-3 py-3">
+                <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSelect(row.id)">
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="row.id"></td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="row.name"></td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="row.email"></td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-center">
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                      :class="row.is_trainer ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-100 text-gray-800'"
+                      x-text="row.is_trainer ? 'Да' : 'Нет'"></span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-center">
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                      :class="row.has_subscription ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                      x-text="row.has_subscription ? '★ Активна' : 'Нет'"></span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-center">
+                <span :class="row.meal_today ? 'text-green-600' : 'text-red-600'" x-text="row.meal_today ? '✔' : '✘'"></span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-center">
+                <span :class="row.activity_today ? 'text-green-600' : 'text-red-600'" x-text="row.activity_today ? '✔' : '✘'"></span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-center">
+                <button @click="toggleExpand(row.id)"
+                        class="text-blue-600 hover:text-blue-900 mx-1"
+                        x-text="expanded === row.id ? 'Скрыть' : 'Сводка'"></button>
+                <a :href="urls.detail + row.id" class="text-indigo-600 hover:text-indigo-900 mx-1">Детали</a>
+                <button @click="impersonate(row.id)" class="text-amber-600 hover:text-amber-800 mx-1">Имперсонация</button>
+                <button @click="sendMagic(row.id)" class="text-cyan-600 hover:text-cyan-800 mx-1">Маг. ссылка</button>
+                <button @click="deleteUser(row.id, row.name)" class="text-red-600 hover:text-red-900 mx-1">Удалить</button>
+              </td>
+            </tr>
+
+            <!-- раскрывашка -->
+            <tr x-show="expanded === row.id" x-cloak>
+              <td colspan="9" class="bg-gray-50 p-6">
+                <div class="space-y-6" x-data="{ d: getDetail(row.id) }">
+
+                  <div>
+                    <h3 class="text-xl font-semibold mb-4">🍽️ Приёмы пищи (сегодня)</h3>
+                    <template x-if="(d.meals||[]).length">
+                      <div class="flex flex-wrap gap-4">
+                        <template x-for="m in d.meals" :key="m.type">
+                          <div class="w-full sm:w-1/2 md:w-1/4 rounded-2xl p-4 shadow-lg"
+                               :class="{
+                                 'bg-gradient-to-br from-amber-300 to-amber-500': m.type==='breakfast',
+                                 'bg-gradient-to-br from-green-300 to-green-500':  m.type==='lunch',
+                                 'bg-gradient-to-br from-blue-300 to-blue-500':    m.type==='dinner',
+                                 'bg-gradient-to-br from-purple-300 to-purple-500':m.type==='snack'
+                               }">
+                            <h4 class="text-lg font-bold capitalize text-white" x-text="m.type"></h4>
+                            <p class="mt-2 text-white font-medium" x-text="`${m.cal} ккал`"></p>
+                            <p class="mt-1 text-white text-sm" x-text="`Б ${m.prot}г · Ж ${m.fat}г · У ${m.carbs}г`"></p>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="!(d.meals||[]).length">
+                      <p class="text-sm text-gray-500">Нет приёмов пищи</p>
+                    </template>
+                  </div>
+
+                  <div class="bg-white p-6 rounded-xl shadow space-y-4">
+                    <h3 class="text-xl font-semibold text-gray-800">🏃 Активность</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <template x-if="d.activity">
+                        <template x-if="d.activity.steps !== null">
+                          <template x-for="k in [
+                            ['Шаги','steps',''],
+                            ['Ккал (актив.)','active_kcal',''],
+                            ['Ккал (покой)','resting_kcal',''],
+                            ['Дистанция','distance_km',' км']
+                          ]" :key="k[1]">
+                            <div class="bg-gray-50 p-4 rounded-lg text-center">
+                              <div class="text-sm text-gray-500" x-text="k[0]"></div>
+                              <div class="mt-1 text-lg font-bold" x-text="(d.activity[k[1]] ?? '—') + k[2]"></div>
+                            </div>
+                          </template>
+                        </template>
+                      </template>
+                      <template x-if="!d.activity || d.activity.steps === null">
+                        <div class="col-span-4 text-sm text-gray-500">Нет данных по активности</div>
+                      </template>
+                    </div>
+                  </div>
+
+                  <div class="bg-white p-6 rounded-xl shadow space-y-4">
+                    <h3 class="text-xl font-semibold text-gray-800">📊 Показатели тела (последний замер)</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      <template x-for="m in (d.metrics||[])" :key="m.label">
+                        <div class="bg-gray-50 p-4 rounded-lg flex flex-col justify-between text-center">
+                          <div class="text-sm text-gray-500 mb-1 flex items-center justify-center gap-1">
+                            <span x-text="m.icon"></span> <span x-text="m.label"></span>
+                          </div>
+                          <div class="text-lg font-semibold text-gray-800 mt-auto">
+                            <span x-text="m.cur!==null ? m.cur : 'n/a'"></span>
+                            <span class="text-sm text-gray-500" x-text="m.unit"></span>
+                          </div>
+                          <template x-if="m.diff!==null">
+                            <div class="mt-2">
+                              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+                                    :class="m.is_good ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                                <span x-text="m.arrow"></span>
+                                <span x-text="Math.abs(m.diff).toFixed(1) + m.unit"></span>
+                                <template x-if="m.pct">
+                                  (<span x-text="Math.abs(m.pct).toFixed(1)"></span>%)
+                                </template>
+                              </span>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                      <template x-if="!(d.metrics||[]).length">
+                        <div class="text-sm text-gray-500">Нет замеров</div>
+                      </template>
+                    </div>
+                  </div>
+
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </template>
+
+        <!-- пустой результат -->
+        <tr x-show="!pageRows.length">
+          <td colspan="9" class="p-8 text-center text-gray-500">Ничего не найдено. Измени фильтры или поиск.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Пагинация -->
+  <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
+    <div class="text-sm text-gray-500">
+      Показано
+      <span class="font-semibold" x-text="pageStart + 1"></span>–<span class="font-semibold" x-text="Math.min(pageEnd, filtered.length)"></span>
+      из <span class="font-semibold" x-text="filtered.length"></span>
+    </div>
+    <div class="flex items-center gap-1">
+      <button class="px-3 py-1.5 rounded border text-sm"
+              :class="page===1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'"
+              :disabled="page===1"
+              @click="page=1">«</button>
+      <button class="px-3 py-1.5 rounded border text-sm"
+              :class="page===1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'"
+              :disabled="page===1"
+              @click="page--">Назад</button>
+      <span class="px-2 text-sm text-gray-600">Стр. <span x-text="page"></span> / <span x-text="pageCount"></span></span>
+      <button class="px-3 py-1.5 rounded border text-sm"
+              :class="page===pageCount ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'"
+              :disabled="page===pageCount"
+              @click="page++">Вперёд</button>
+      <button class="px-3 py-1.5 rounded border text-sm"
+              :class="page===pageCount ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'"
+              :disabled="page===pageCount"
+              @click="page=pageCount">»</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function adminPage(){
+  return {
+    // ---- исходные данные и служебное ----
+    rows: window.__users || [],
+    details: window.__details || {},
+    urls: window.__urls || {},
+    q: '',
+    filters: { sub: 'any', trainer: 'any', meal: 'any', activity: 'any' },
+    sortKey: 'id',
+    sortDir: 'asc',
+    page: 1,
+    pageSize: 25,
+    selected: new Set(),
+    onlySelected: false,
+    expanded: null,
+
+    // ---- утилиты ----
+    norm(s){ return (s||'').toString().toLowerCase().trim(); },
+    isSelected(id){ return this.selected.has(id); },
+    toggleSelect(id){ this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id); },
+    clearSelection(){ this.selected.clear(); },
+    toggleSelectAllOnPage(e){
+      const check = e.target.checked;
+      this.pageRows.forEach(r => check ? this.selected.add(r.id) : this.selected.delete(r.id));
+    },
+    get allOnPageSelected(){
+      if(!this.pageRows.length) return false;
+      return this.pageRows.every(r => this.selected.has(r.id));
+    },
+    sortIcon(key){
+      if(this.sortKey!==key) return '↕';
+      return this.sortDir==='asc' ? '▲' : '▼';
+    },
+    toggleSort(key){
+      if(this.sortKey===key){ this.sortDir = this.sortDir==='asc' ? 'desc' : 'asc'; }
+      else { this.sortKey = key; this.sortDir = 'asc'; }
+    },
+    toggleExpand(id){ this.expanded = (this.expanded===id ? null : id); },
+    getDetail(id){
+      return this.details[id] || this.details[String(id)] || { meals: [], activity: null, metrics: [] };
+    },
+
+    // ---- фильтрация/поиск/сортировка ----
+    passesFilters(r){
+      if(this.onlySelected && !this.selected.has(r.id)) return false;
+
+      if(this.filters.sub !== 'any'){
+        const need = this.filters.sub === 'active';
+        if(!!r.has_subscription !== need) return false;
+      }
+      if(this.filters.trainer !== 'any'){
+        const need = this.filters.trainer === 'yes';
+        if(!!r.is_trainer !== need) return false;
+      }
+      if(this.filters.meal !== 'any'){
+        const need = this.filters.meal === 'ok';
+        if(!!r.meal_today !== need) return false;
+      }
+      if(this.filters.activity !== 'any'){
+        const need = this.filters.activity === 'ok';
+        if(!!r.activity_today !== need) return false;
+      }
+
+      const q = this.norm(this.q);
+      if(!q) return true;
+      const hay = `${r.id} ${this.norm(r.name)} ${this.norm(r.email)}`;
+      return hay.includes(q);
+    },
+    get filtered(){
+      const out = this.rows.filter(r => this.passesFilters(r));
+      const k = this.sortKey, dir = this.sortDir==='asc' ? 1 : -1;
+      out.sort((a,b)=>{
+        let va=a[k], vb=b[k];
+        if(typeof va==='string') va=va.toLowerCase();
+        if(typeof vb==='string') vb=vb.toLowerCase();
+        if(va<vb) return -1*dir;
+        if(va>vb) return  1*dir;
+        return 0;
+      });
+      return out;
+    },
+
+    // ---- пагинация ----
+    get pageCount(){ return Math.max(1, Math.ceil(this.filtered.length / this.pageSize)); },
+    get pageStart(){ return (this.page-1)*this.pageSize; },
+    get pageEnd(){ return this.pageStart + this.pageSize; },
+    get pageRows(){
+      if(this.page > this.pageCount) this.page = this.pageCount;
+      return this.filtered.slice(this.pageStart, this.pageEnd);
+    },
+
+    // ---- массовые действия ----
+    copyEmails(){
+      const list = (this.selected.size ? this.rows.filter(r=>this.selected.has(r.id)) : this.filtered).map(r=>r.email);
+      if(!list.length) return;
+      navigator.clipboard.writeText(list.join(', '))
+        .then(()=>alert('Email’ы скопированы'))
+        .catch(()=>alert('Не удалось скопировать'));
+    },
+    exportCSV(){
+      const data = (this.selected.size ? this.rows.filter(r=>this.selected.has(r.id)) : this.filtered);
+      if(!data.length) return;
+      const header = ['id','name','email','is_trainer','has_subscription','meal_today','activity_today'];
+      const lines = [header.join(',')].concat(
+        data.map(r => [r.id, r.name, r.email, r.is_trainer, r.has_subscription, r.meal_today, r.activity_today]
+          .map(v => `"${String(v).replaceAll('"','""')}"`).join(','))
+      );
+      const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'users.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+
+    // ---- действия строк ----
+    deleteUser(id, name){
+      if(!confirm(`Удалить пользователя ${name}? Это действие необратимо.`)) return;
+      const f = document.createElement('form');
+      f.method = 'POST';
+      f.action = this.urls.delete + id;
+      document.body.appendChild(f);
+      f.submit();
+    },
+    impersonate(id){
+      window.location.href = this.urls.impersonate + id;
+    },
+    sendMagic(id){
+      const f = document.createElement('form');
+      f.method = 'POST';
+      f.action = this.urls.magic + id;
+      document.body.appendChild(f);
+      f.submit();
+    }
+  }
+}
+</script>
+
+{% endblock %}

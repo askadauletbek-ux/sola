@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-6" x-data="{ editModal: false }">
+  <h2 class="text-2xl font-bold mb-4">Профиль пользователя #{{ user.id }}</h2>
+
+  <div class="flex space-x-2 mb-6">
+    <button
+      @click="editModal = true"
+      class="px-4 py-2 bg-indigo-600 text-white rounded">
+      Редактировать
+    </button>
+    <a
+      href="{{ url_for('admin_dashboard') }}"
+      class="px-4 py-2 bg-gray-300 rounded">
+      Назад к списку
+    </a>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="space-y-2">
+      <p><strong>Имя:</strong> {{ user.name }}</p>
+      <p><strong>Email:</strong> {{ user.email }}</p>
+      <p><strong>Дата рождения:</strong> {{ user.date_of_birth or '-' }}</p>
+      <p>
+        <strong>Возраст:</strong>
+        {{ user.date_of_birth and calculate_age(user.date_of_birth) or '-' }}
+      </p>
+    </div>
+    <div class="space-y-2">
+      <p>
+        <strong>Питание сегодня:</strong>
+        {% if has_meal %}
+          <span class="text-green-600">✔</span>
+        {% else %}
+          <span class="text-red-600">✘</span>
+        {% endif %}
+      </p>
+      <p>
+        <strong>Активность сегодня:</strong>
+        {% if has_activity %}
+          <span class="text-green-600">✔</span>
+        {% else %}
+          <span class="text-red-600">✘</span>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <h3 class="text-xl font-semibold mb-2">История приёмов пищи</h3>
+  <div class="overflow-x-auto mb-8">
+    <table class="min-w-full divide-y divide-gray-200 table-auto text-sm">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="px-3 py-2">Дата</th>
+          <th class="px-3 py-2">Тип</th>
+          <th class="px-3 py-2">Калории</th>
+          <th class="px-3 py-2">Б/Ж/У</th>
+          <th class="px-3 py-2">Анализ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in meals %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-3 py-2">{{ m.date }}</td>
+          <td class="px-3 py-2">{{ m.meal_type }}</td>
+          <td class="px-3 py-2">{{ m.calories }}</td>
+          <td class="px-3 py-2">{{ m.protein }}/{{ m.fat }}/{{ m.carbs }}</td>
+          <td class="px-3 py-2">
+            {{ m.analysis[:50] ~ (m.analysis|length > 50 and '...' or '') }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- EDIT MODAL -->
+  <div
+    x-show="editModal"
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center"
+  >
+    <div class="bg-white rounded-lg p-6 w-96">
+      <h2 class="text-xl font-bold mb-4">Редактировать пользователя</h2>
+      <form
+        method="post"
+        action="{{ url_for('admin_user_edit', user_id=user.id) }}"
+        class="space-y-3"
+      >
+        <div>
+          <label class="block font-medium">Имя</label>
+          <input
+            type="text"
+            name="name"
+            value="{{ user.name }}"
+            class="w-full p-2 border rounded"
+            required
+          >
+        </div>
+        <div>
+          <label class="block font-medium">Email</label>
+          <input
+            type="email"
+            name="email"
+            value="{{ user.email }}"
+            class="w-full p-2 border rounded"
+            required
+          >
+        </div>
+        <div>
+          <label class="block font-medium">Дата рождения</label>
+          <input
+            type="date"
+            name="date_of_birth"
+            value="{{ user.date_of_birth }}"
+            class="w-full p-2 border rounded"
+          >
+        </div>
+        <div class="flex justify-end space-x-2 mt-4">
+          <button
+            type="button"
+            @click="editModal = false"
+            class="px-4 py-2 bg-gray-300 rounded">
+            Отмена
+          </button>
+          <button
+            type="submit"
+            class="px-4 py-2 bg-indigo-600 text-white rounded">
+            Сохранить
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

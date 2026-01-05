@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">⏱ Планировщик</h1>
+    <form method="post" action="{{ url_for('admin_jobs_run_tick_now') }}">
+      <button class="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Запустить тик сейчас</button>
+    </form>
+  </div>
+
+  {% if jobs|length == 0 %}
+    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4">
+      Планировщик не запущен или нет задач. Убедись, что воркер активен и стартует APScheduler.
+    </div>
+  {% else %}
+  <div class="bg-white rounded-xl shadow divide-y">
+    {% for j in jobs %}
+      <div class="p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div class="font-semibold">{{ j.id }}</div>
+          <div class="text-sm text-gray-500">next: {{ j.next_run_time or '—' }}</div>
+        </div>
+        <div class="flex gap-2">
+          <form method="post" action="{{ url_for('admin_jobs_pause', job_id=j.id) }}">
+            <button class="px-3 py-1.5 rounded-lg bg-gray-600 text-white hover:bg-gray-700">Пауза</button>
+          </form>
+          <form method="post" action="{{ url_for('admin_jobs_resume', job_id=j.id) }}">
+            <button class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Возобновить</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

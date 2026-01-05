@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<script>
+  window.__reports = {{ reports|tojson }};
+  window.__urls = {
+    resolve: "{{ url_for('admin_report_resolve', rid=0) }}".replace(/0$/, ""),
+    user: "{{ url_for('admin_user_detail', user_id=0) }}".replace(/0$/, "")
+  };
+</script>
+
+<div class="max-w-6xl mx-auto px-4 py-6" x-data="reportsPage()">
+  <h1 class="text-3xl font-bold mb-6 flex items-center gap-2">
+    🛡️ Модерация жалоб
+    <span class="text-lg font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full" x-text="rows.length"></span>
+  </h1>
+
+  <div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <th class="px-6 py-3 w-32">Дата</th>
+          <th class="px-6 py-3 w-40">Причина</th>
+          <th class="px-6 py-3 w-48">От кого</th>
+          <th class="px-6 py-3">Контент (На кого)</th>
+          <th class="px-6 py-3 text-right w-64">Действия</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-200">
+        <template x-for="r in rows" :key="r.id">
+          <tr class="hover:bg-gray-50 transition">
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="r.created_at"></td>
+
+            <td class="px-6 py-4 whitespace-nowrap">
+              <span class="px-2 py-1 rounded text-xs font-bold uppercase"
+                    :class="{
+                      'bg-red-100 text-red-800': r.reason === 'harassment',
+                      'bg-yellow-100 text-yellow-800': r.reason === 'spam',
+                      'bg-gray-100 text-gray-800': r.reason === 'other'
+                    }"
+                    x-text="translate(r.reason)">
+              </span>
+            </td>
+
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="r.reporter"></td>
+
+            <td class="px-6 py-4">
+              <div class="flex flex-col gap-1">
+                <div class="text-sm font-bold text-indigo-700 cursor-pointer hover:underline"
+                     @click="openUser(r.sender_id)"
+                     x-text="'👤 ' + r.sender"></div>
+
+                <div class="text-sm text-gray-800 bg-gray-50 p-2 rounded border border-gray-100 italic">
+                  <span x-text="r.text || '(Без текста)'"></span>
+                </div>
+
+                <template x-if="r.image">
+                  <div class="mt-2">
+                    <a :href="r.image" target="_blank">
+                      <img :src="r.image" class="h-20 w-auto rounded border hover:opacity-75 transition">
+                    </a>
+                  </div>
+                </template>
+              </div>
+            </td>
+
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+              <div class="flex flex-col gap-2 items-end">
+                <button @click="resolve(r.id, 'delete_msg')"
+                        class="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 px-3 py-1 rounded border border-red-200 w-full text-center transition">
+                  🗑️ Удалить сообщение
+                </button>
+                <button @click="resolve(r.id, 'dismiss')"
+                        class="text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-100 px-3 py-1 rounded border border-gray-300 w-full text-center transition">
+                  ❌ Отклонить жалобу
+                </button>
+              </div>
+            </td>
+          </tr>
+        </template>
+
+        <tr x-show="rows.length === 0">
+          <td colspan="5" class="px-6 py-12 text-center text-gray-500">
+            Жалоб нет 🎉
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function reportsPage() {
+  return {
+    rows: window.__reports || [],
+
+    translate(reason) {
+      const map = {
+        'spam': 'Спам',
+        'harassment': 'Оскорбление',
+        'other': 'Другое'
+      };
+      return map[reason] || reason;
+    },
+
+    openUser(id) {
+      if(id) window.open(window.__urls.user + id, '_blank');
+    },
+
+    resolve(id, action) {
+      if(!confirm(action === 'delete_msg' ? 'Удалить сообщение пользователя? Это необратимо.' : 'Отклонить жалобу (сообщение останется)?')) return;
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = window.__urls.resolve + id;
+
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'action';
+      input.value = action;
+
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    }
+  }
+}
+</script>
+
+{% endblock %}

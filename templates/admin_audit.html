@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="audit()">
+  <h1 class="text-2xl font-bold mb-4">📜 Аудит</h1>
+
+  <div class="bg-white rounded-xl shadow p-4 mb-4 grid md:grid-cols-5 gap-3">
+    <input x-model="qAction" type="text" class="border rounded-lg px-3 py-2" placeholder="Фильтр: действие (action)">
+    <input x-model="qEntity" type="text" class="border rounded-lg px-3 py-2" placeholder="Фильтр: сущность (entity)">
+    <input x-model="qActor" type="number" class="border rounded-lg px-3 py-2" placeholder="Actor ID">
+    <input x-model="dateFrom" type="date" class="border rounded-lg px-3 py-2">
+    <input x-model="dateTo" type="date" class="border rounded-lg px-3 py-2">
+  </div>
+
+  <div class="bg-white rounded-xl shadow overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-3 py-2 text-left">Время</th>
+          <th class="px-3 py-2 text-left">Админ</th>
+          <th class="px-3 py-2 text-left">Действие</th>
+          <th class="px-3 py-2 text-left">Сущность</th>
+          <th class="px-3 py-2 text-left">Старое</th>
+          <th class="px-3 py-2 text-left">Новое</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        {% for a in logs %}
+          <template x-if="show(`{{ a.created_at.isoformat() if a.created_at else '' }}`, '{{ a.action }}', '{{ a.entity }}', '{{ a.entity_id }}', '{{ a.actor_id or '' }}')">
+            <tr>
+              <td class="px-3 py-2 whitespace-nowrap">{{ a.created_at }}</td>
+              <td class="px-3 py-2">{{ a.actor_id or '—' }}</td>
+              <td class="px-3 py-2">{{ a.action }}</td>
+              <td class="px-3 py-2">{{ a.entity }}#{{ a.entity_id }}</td>
+              <td class="px-3 py-2 align-top">
+                <details>
+                  <summary class="cursor-pointer text-gray-600">Показать</summary>
+                  <pre class="whitespace-pre-wrap">{{ a.old_data|tojson if a.old_data else '' }}</pre>
+                </details>
+              </td>
+              <td class="px-3 py-2 align-top">
+                <details open>
+                  <summary class="cursor-pointer text-gray-600">Показать</summary>
+                  <pre class="whitespace-pre-wrap">{{ a.new_data|tojson if a.new_data else '' }}</pre>
+                </details>
+              </td>
+            </tr>
+          </template>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function audit(){
+  return {
+    qAction:'', qEntity:'', qActor:'', dateFrom:'', dateTo:'',
+    show(iso, action, entity, entityId, actor){
+      const act = this.qAction.toLowerCase().trim();
+      const ent = this.qEntity.toLowerCase().trim();
+      const okA = !act || action.toLowerCase().includes(act);
+      const okE = !ent || (entity.toLowerCase().includes(ent) || (`${entity}#${entityId}`).toLowerCase().includes(ent));
+      const okActor = !this.qActor || (`${actor}` === `${this.qActor}`);
+      if (!okA || !okE || !okActor) return false;
+      if (!iso || (!this.dateFrom && !this.dateTo)) return true;
+      const d = new Date(iso);
+      const df = this.dateFrom ? new Date(this.dateFrom) : null;
+      const dt = this.dateTo ? new Date(this.dateTo) : null;
+      return (!df || d >= df) && (!dt || d <= dt);
+    }
+  }
+}
+</script>
+{% endblock %}

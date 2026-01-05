@@ -1,0 +1,149 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="aiQueue()">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">🤖 AI-очередь</h1>
+    <div class="text-sm text-gray-500">
+      {% set total = logs|length %}
+      {% set ns = namespace(flagged=0) %}
+      {% for m in logs %}{% if m.is_flagged %}{% set ns.flagged = ns.flagged + 1 %}{% endif %}{% endfor %}
+      Всего: <b>{{ total }}</b> · Под вопросом: <b class="text-amber-600">{{ ns.flagged }}</b>
+    </div>
+  </div>
+
+  <!-- Панель фильтров -->
+  <div class="bg-white rounded-xl shadow p-4 mb-4">
+    <div class="grid md:grid-cols-5 gap-3">
+      <input x-model="q" type="text" placeholder="Поиск: название/вердикт/анализ"
+             class="border rounded-lg px-3 py-2 md:col-span-2">
+      <input x-model.number="userId" type="number" placeholder="User ID"
+             class="border rounded-lg px-3 py-2">
+      <select x-model="mealType" class="border rounded-lg px-3 py-2">
+        <option value="">Тип приёма</option>
+        <option value="breakfast">Завтрак</option>
+        <option value="lunch">Обед</option>
+        <option value="dinner">Ужин</option>
+        <option value="snack">Перекус</option>
+      </select>
+      <select x-model="onlyFlagged" class="border rounded-lg px-3 py-2">
+        <option value="">Все</option>
+        <option value="1">Только помеченные</option>
+      </select>
+      <div class="flex items-center gap-2 md:col-span-5">
+        <label class="text-sm text-gray-600">Дата с:</label>
+        <input x-model="dateFrom" type="date" class="border rounded-lg px-2 py-1">
+        <label class="text-sm text-gray-600">по:</label>
+        <input x-model="dateTo" type="date" class="border rounded-lg px-2 py-1">
+        <button @click="reset()" class="ml-auto px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200">Сброс</button>
+        <button @click="compact = !compact"
+        class="px-3 py-1.5 rounded-lg"
+        :class="compact ? 'bg-indigo-600 text-white' : 'bg-gray-100 hover:bg-gray-200'">
+  <span x-text="compact ? 'Компактный' : 'Полный'"></span>
+</button>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Лента -->
+  <div class="space-y-4">
+    {% for m in logs %}
+      <template x-if="show({{ m.id }}, {{ m.user_id }}, '{{ m.meal_type }}', '{{ m.date }}', {{ (m.is_flagged and 'true') or 'false' }}, `{{ (m.name or '')|e }}`, `{{ (m.verdict or '')|e }}`, `{{ (m.analysis or '')|e }}`)">
+        <div class="bg-white rounded-xl shadow p-4 transition hover:shadow-md">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="text-sm text-gray-600">
+              <b>ID {{ m.id }}</b> · User #{{ m.user_id }} · {{ m.date }} · {{ m.meal_type }}
+              {% if m.is_flagged %}
+                <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">под вопросом</span>
+              {% endif %}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <form method="post" action="{{ url_for('admin_ai_flag', meal_id=m.id) }}">
+                <button class="px-2.5 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700">Пометить</button>
+              </form>
+              <form method="post" action="{{ url_for('admin_ai_unflag', meal_id=m.id) }}">
+                <button class="px-2.5 py-1.5 rounded-lg bg-gray-600 text-white hover:bg-gray-700">Снять</button>
+              </form>
+              <form method="post" enctype="multipart/form-data" action="{{ url_for('admin_ai_reanalyse', meal_id=m.id) }}">
+                <label class="px-2.5 py-1.5 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700 cursor-pointer">
+                  Перегенерировать<input type="file" name="file" class="hidden" onchange="this.form.submit()">
+                </label>
+              </form>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-{{ m.image_path and 5 or 4 }} gap-4 mt-3" :class="compact && 'md:grid-cols-3'">
+            {% if m.image_path %}
+              <div class="md:col-span-1">
+                <div class="aspect-video bg-gray-50 border rounded-lg flex items-center justify-center text-xs text-gray-500">
+                  <div class="p-2 text-center">
+                    <div class="font-medium mb-1">Файл сохранён</div>
+                    <div class="truncate max-w-[220px]">{{ m.image_path }}</div>
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+
+            <div>
+              <div class="text-gray-400 text-xs uppercase">Название</div>
+              <div class="font-semibold text-sm">{{ m.name or '—' }}</div>
+            </div>
+            <div>
+              <div class="text-gray-400 text-xs uppercase">Калории</div>
+              <div class="font-semibold text-sm">{{ m.calories }}</div>
+              <div class="text-gray-400 text-xs uppercase mt-2">Б • Ж • У</div>
+              <div class="font-semibold text-sm">{{ m.protein }} • {{ m.fat }} • {{ m.carbs }}</div>
+            </div>
+            <div class="md:col-span-{{ m.image_path and 2 or 2 }}">
+              <div class="text-gray-400 text-xs uppercase">Вердикт</div>
+              <div class="font-medium text-sm">{{ m.verdict }}</div>
+            </div>
+          </div>
+
+          <details class="mt-3" :open="!compact">
+            <summary class="cursor-pointer text-gray-600">Анализ</summary>
+            <pre class="mt-2 text-sm whitespace-pre-wrap">{{ m.analysis }}</pre>
+          </details>
+
+          <form method="post" action="{{ url_for('admin_ai_edit', meal_id=m.id) }}" class="mt-3 grid md:grid-cols-6 gap-2">
+            <input class="border rounded-lg px-2 py-2" name="name" value="{{ m.name or '' }}" placeholder="Название">
+            <input class="border rounded-lg px-2 py-2" name="calories" value="{{ m.calories }}" placeholder="Калории">
+            <input class="border rounded-lg px-2 py-2" name="protein" value="{{ m.protein }}" placeholder="Белки">
+            <input class="border rounded-lg px-2 py-2" name="fat" value="{{ m.fat }}" placeholder="Жиры">
+            <input class="border rounded-lg px-2 py-2" name="carbs" value="{{ m.carbs }}" placeholder="Углеводы">
+            <input class="border rounded-lg px-2 py-2" name="verdict" value="{{ m.verdict or '' }}" placeholder="Вердикт" >
+            <textarea class="border rounded-lg px-3 py-2 md:col-span-6" name="analysis" rows="3" placeholder="Анализ">{{ m.analysis }}</textarea>
+            <div class="md:col-span-6 flex items-center gap-3">
+              <button class="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Сохранить</button>
+              {% if m.is_flagged %}
+                <span class="text-xs text-amber-600">Не забудь снять пометку после правки</span>
+              {% endif %}
+            </div>
+          </form>
+        </div>
+      </template>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+function aiQueue(){
+  return {
+    q:'', userId:'', mealType:'', onlyFlagged:'', dateFrom:'', dateTo:'', compact:true,
+    reset(){ this.q=''; this.userId=''; this.mealType=''; this.onlyFlagged=''; this.dateFrom=''; this.dateTo=''; },
+    show(id, uid, type, dateStr, flagged, name, verdict, analysis){
+      const q = this.q.toLowerCase().trim();
+      const okText = !q || (name.toLowerCase().includes(q) || verdict.toLowerCase().includes(q) || analysis.toLowerCase().includes(q));
+      const okUser = !this.userId || (+uid === +this.userId);
+      const okType = !this.mealType || (type === this.mealType);
+      const okFlag = !this.onlyFlagged || flagged;
+      const d = dateStr ? new Date(dateStr) : null;
+      const df = this.dateFrom ? new Date(this.dateFrom) : null;
+      const dt = this.dateTo ? new Date(this.dateTo) : null;
+      const okDate = !d || ((!df || d >= df) && (!dt || d <= dt));
+      return okText && okUser && okType && okFlag && okDate;
+    }
+  }
+}
+</script>
+{% endblock %}

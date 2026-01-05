@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Добавить рацион</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.1.2/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+    <div class="container mx-auto p-8">
+        <div class="bg-white shadow-md rounded-lg p-6">
+            <h1 class="text-2xl font-semibold text-gray-800">Добавить рацион</h1>
+            <form action="/submit_diet" method="POST" enctype="multipart/form-data" class="mt-4">
+                <div class="mb-4">
+                    <label for="meal_type" class="block text-gray-700">Тип приёма пищи</label>
+                    <select name="meal_type" id="meal_type" class="mt-2 p-2 w-full border border-gray-300 rounded-md" required>
+                        <option value="breakfast">Завтрак</option>
+                        <option value="lunch">Обед</option>
+                        <option value="dinner">Ужин</option>
+                        <option value="snack">Перекус</option>
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label for="photo" class="block text-gray-700">Загрузите фото еды</label>
+                    <input type="file" name="photo" id="photo" class="mt-2 p-2 w-full border border-gray-300 rounded-md" accept="image/*" required>
+                </div>
+
+                <div class="mb-4">
+                    <label for="comment" class="block text-gray-700">Описание блюда</label>
+                    <textarea name="comment" id="comment" rows="4" class="mt-2 p-2 w-full border border-gray-300 rounded-md" placeholder="Опишите, что на фото (название блюда, порции)" required></textarea>
+                </div>
+
+                <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 w-full">
+                    Анализировать и сохранить
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
