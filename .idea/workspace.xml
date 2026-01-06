@@ -30,7 +30,53 @@
       <change beforePath="$PROJECT_DIR$/../SalesJourney/webhooks.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SalesJourney/webhooks.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../foodstream/.env" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/2025-09-25_141142.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP1038576435848898436.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP1062519846919362775.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP1354489456839902412.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP1661531237535614044.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP195625396786384567.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP204999209362763689.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP3377798471486085023.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP3562804102905582792.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP4048177607219824165.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP4476985493465277055.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP4548231368930924637.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP4823711898142446066.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP5682170463285014815.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP6103426404828618948.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP6421287397585858103.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP8622320961704272965.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/CAP929485924096796068.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/avatars/2c17735baf8e471f8ebe8f70223ee699.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/avatars/5cf181292ebd40ee8936fe2f8277a38e.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/avatars/978466138c894854add73dca2b622819.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/avatars/a0fc7d1712e9463abb8a907aeb0f2ce8.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/avatars/a2ba42f0621c46b89842e2db9554e5da.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/i.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/meal.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/photo_2025-09-17_11.46.59.jpeg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/shutterstock_484908445.jpg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/28/visuals/28/20250925/1758791565_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/28/visuals/28/20250925/1758791565_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758791872_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758791872_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792469_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792469_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792569_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792569_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792959_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758792959_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758793250_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758793250_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758793562_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visualizations/29/visuals/29/20250925/1758793562_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visuals/25/20250923/1758656572_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visuals/25/20250923/1758656572_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visuals/25/20250923/1758657284_current.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uploads/visuals/25/20250923/1758657284_target.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../foodstream/.env" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/alembic.ini" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/alembic.ini" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/app.py" afterDir="false" />

@@ -30,6 +30,8 @@ class User(db.Model):
     # Цели
     fat_mass_goal = db.Column(db.Float, nullable=True)
     muscle_mass_goal = db.Column(db.Float, nullable=True)
+    # Новое поле:
+    step_goal = db.Column(db.Integer, default=10000, server_default='10000', nullable=False)
 
     initial_body_analysis_id = db.Column(db.Integer, db.ForeignKey('body_analysis.id'), nullable=True)
     last_measurement_reminder_sent_at = db.Column(db.DateTime, nullable=True)

@@ -1308,7 +1308,8 @@ def app_profile_data():
         "avatar_filename": user.avatar.filename if user.avatar else None,
         "current_streak": getattr(user, "current_streak", 0),
         "last_7_days_status": last_7_days_status,
-        "show_welcome_popup": show_popup
+        "show_welcome_popup": show_popup,
+        "step_goal": getattr(user, "step_goal", 10000)
     }
 
     # --- 3. Данные о диете ---
@@ -1487,6 +1488,25 @@ def app_profile_data():
             "latest_analysis": latest_analysis_data
         }
     })
+
+
+@app.route('/api/app/update_step_goal', methods=['POST'])
+@login_required
+def app_update_step_goal():
+    user = get_current_user()
+    data = request.get_json(force=True, silent=True) or {}
+
+    try:
+        new_goal = int(data.get('step_goal', 10000))
+        if new_goal > 0:
+            user.step_goal = new_goal
+            db.session.commit()
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"ok": False, "error": "Invalid goal"}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route('/api/app/meals/today')
 @login_required
