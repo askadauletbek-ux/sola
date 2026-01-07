@@ -6,6 +6,7 @@ import re
 import string
 import uuid
 from datetime import date, datetime, timedelta, time as dt_time, UTC
+from zoneinfo import ZoneInfo  # <--- Добавлено
 from functools import wraps
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -1555,10 +1556,22 @@ def app_log_meal():
     user = get_current_user()
     data = request.get_json()
 
+    # --- ИСПРАВЛЕНИЕ: Дата из запроса или Алматы ---
+    date_str = data.get('date')
+    if date_str:
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+    else:
+        # Если даты нет, берем "сегодня" по Алматы
+        target_date = datetime.now(ZoneInfo("Asia/Almaty")).date()
+    # -----------------------------------------------
+
     # Ищем существующий (для обновления)
     meal = MealLog.query.filter_by(
         user_id=user.id,
-        date=date.today(),
+        date=target_date,  # Используем target_date
         meal_type=data['meal_type']
     ).first()
 
@@ -1566,7 +1579,7 @@ def app_log_meal():
         # Создаем новый
         meal = MealLog(
             user_id=user.id,
-            date=date.today(),
+            date=target_date,  # Используем target_date
             meal_type=data['meal_type']
         )
 
@@ -6658,7 +6671,9 @@ def app_log_activity():
     date_str = data.get('date')  # 'YYYY-MM-DD'
 
     # 2. Определяем дату (важно для часовых поясов!)
-    log_date = date.today()
+    # По умолчанию берем текущую дату в Алматы, а не серверную UTC
+    log_date = datetime.now(ZoneInfo("Asia/Almaty")).date()
+
     if date_str:
         try:
             log_date = datetime.strptime(date_str, '%Y-%m-%d').date()
