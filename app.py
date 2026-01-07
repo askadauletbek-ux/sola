@@ -5394,10 +5394,65 @@ def weekly_summary():
     # То же самое: убираем .strftime()
     activity_map = {row.date: row.active_kcal for row in activities}
 
-    # Собираем данные в массивы по дням
+    # --- Сбор данных для уровней (High/Med/Low) ---
+
+    # Считаем количество приемов пищи по дням (count distinct meal_type)
+    meals_count_sql = text("""
+            SELECT date, COUNT(DISTINCT meal_type) as cnt FROM meal_logs 
+            WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today 
+            GROUP BY date
+        """)
+    meals_count_rows = db.session.execute(meals_count_sql,
+                                          {'user_id': user_id, 'week_ago': week_ago, 'today': today}).fetchall()
+    meals_count_map = {row.date: row.cnt for row in meals_count_rows}
+
+    # Считаем шаги по дням
+    steps_sql = text("""
+            SELECT date, steps FROM activity 
+            WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today
+        """)
+    steps_rows = db.session.execute(steps_sql, {'user_id': user_id, 'week_ago': week_ago, 'today': today}).fetchall()
+    steps_map = {row.date: row.steps for row in steps_rows}
+
+    user_step_goal = getattr(get_current_user(), 'step_goal', 10000) or 10000
+
+    nutrition_levels = []
+    activity_levels = []
+
+    # Проходим по дням недели
+    for i in range(7):
+        d_obj = week_ago + timedelta(days=i)
+
+        # 1. Уровень питания
+        # 2 приема = Low (0), 3 приема = Medium (1), 4 приема = High (2)
+        # (Если 0-1 прием, тоже считаем Low)
+        m_count = meals_count_map.get(d_obj, 0)
+        if m_count >= 4:
+            n_level = 2  # High
+        elif m_count == 3:
+            n_level = 1  # Medium
+        else:
+            n_level = 0  # Low
+        nutrition_levels.append(n_level)
+
+        # 2. Уровень активности
+        # 100% цели = High (2), >=50% = Medium (1), <50% = Low (0)
+        steps = steps_map.get(d_obj, 0)
+        pct = steps / user_step_goal
+        if pct >= 1.0:
+            a_level = 2  # High
+        elif pct >= 0.5:
+            a_level = 1  # Medium
+        else:
+            a_level = 0  # Low
+        activity_levels.append(a_level)
+
+    # Собираем данные в массивы по дням (существующая логика веса остается)
     weight_values = [
         next((w.avg_weight for w in weight_data if int(w.day_of_week) == (week_ago + timedelta(days=i)).weekday()),
              None) for i in range(7)]
+
+    # Оставляем калории для совместимости, но добавляем уровни
     consumed_kcal_values = [meals_map.get((week_ago + timedelta(days=i)).strftime('%Y-%m-%d'), 0) for i in range(7)]
     burned_kcal_values = [activity_map.get((week_ago + timedelta(days=i)).strftime('%Y-%m-%d'), 0) for i in range(7)]
 
@@ -5406,7 +5461,9 @@ def weekly_summary():
         "datasets": {
             "weight": weight_values,
             "consumed_kcal": consumed_kcal_values,
-            "burned_kcal": burned_kcal_values
+            "burned_kcal": burned_kcal_values,
+            "nutrition_levels": nutrition_levels,  # <-- Новые данные [0, 1, 2...]
+            "activity_levels": activity_levels  # <-- Новые данные [0, 1, 2...]
         }
     })
 
@@ -6552,14 +6609,12 @@ def reset_goals():
 @login_required
 def app_calendar_data():
     """
-    Возвращает даты, когда были:
-    1. Тренировки (trainings)
-    2. Приемы пищи (meals)
-    за указанный месяц (YYYY-MM).
-    Также возвращает текущий стрик.
+    Возвращает детальную статистику по дням для календаря:
+    1. Процент заполнения кольца питания (0.25, 0.5, 0.75, 1.0).
+    2. Процент заполнения кольца активности (steps / goal).
     """
     user = get_current_user()
-    month_str = request.args.get('month')  # "2023-10"
+    month_str = request.args.get('month')
 
     if not month_str:
         today = date.today()
@@ -6575,33 +6630,61 @@ def app_calendar_data():
     except:
         return jsonify({"ok": False, "error": "Invalid month format"}), 400
 
-    # 1. Даты с едой
-    meal_dates = db.session.query(MealLog.date).filter(
+    # 1. Данные по еде: считаем количество уникальных meal_type за каждый день
+    # Если 1 прием = 25%, 4 приема = 100%
+    meals_query = db.session.query(
+        MealLog.date,
+        func.count(func.distinct(MealLog.meal_type))
+    ).filter(
         MealLog.user_id == user.id,
         MealLog.date >= start_date,
         MealLog.date <= end_date
-    ).distinct().all()
+    ).group_by(MealLog.date).all()
 
-    # Превращаем в список строк "YYYY-MM-DD"
-    meal_dates_list = [d[0].strftime("%Y-%m-%d") for d in meal_dates]
+    # 2. Данные по активности: шаги за каждый день
+    activity_query = db.session.query(Activity).filter(
+        Activity.user_id == user.id,
+        Activity.date >= start_date,
+        Activity.date <= end_date
+    ).all()
 
-    # 2. Даты тренировок (где я записан)
-    # (Используем существующую логику или упрощенную выборку)
+    # Сборка данных
+    daily_stats = {}
+    step_goal = getattr(user, 'step_goal', 10000) or 10000
+
+    # Заполняем еду
+    for date_obj, count in meals_query:
+        date_str = date_obj.strftime("%Y-%m-%d")
+        if date_str not in daily_stats:
+            daily_stats[date_str] = {"meal_percent": 0.0, "step_percent": 0.0}
+
+        # Логика: 1 прием = 0.25, 4 приема = 1.0
+        daily_stats[date_str]["meal_percent"] = min(1.0, count * 0.25)
+
+    # Заполняем активность
+    for act in activity_query:
+        date_str = act.date.strftime("%Y-%m-%d")
+        if date_str not in daily_stats:
+            daily_stats[date_str] = {"meal_percent": 0.0, "step_percent": 0.0}
+
+        steps = act.steps or 0
+        if step_goal > 0:
+            daily_stats[date_str]["step_percent"] = min(1.0, steps / step_goal)
+
+    # Даты тренировок (оставляем список для точек)
     training_dates = db.session.query(Training.date).join(TrainingSignup).filter(
         TrainingSignup.user_id == user.id,
         Training.date >= start_date,
         Training.date <= end_date
     ).distinct().all()
-
     training_dates_list = [d[0].strftime("%Y-%m-%d") for d in training_dates]
 
     return jsonify({
         "ok": True,
-        "current_streak": user.current_streak,  # <-- Берем из поля, которое добавили в models.py
-        "meal_dates": meal_dates_list,
+        "current_streak": getattr(user, "current_streak", 0),
+        "daily_stats": daily_stats,  # <-- Новый формат данных
         "training_dates": training_dates_list
     })
-
 
 @app.route('/api/achievements', methods=['GET'])
 @login_required
