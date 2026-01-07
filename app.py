@@ -1479,16 +1479,38 @@ def app_profile_data():
                     "percentage": min(100, max(0, percentage_at_point))
                 })
 
+        # Расчет прогресса веса (линейный от точки А до точки Б)
+        weight_progress = None
+        if user.initial_body_analysis_id and user.weight_goal and latest_analysis:
+            initial_record = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
+            if initial_record:
+                start_w = initial_record.weight
+                curr_w = latest_analysis.weight
+                goal_w = user.weight_goal
+
+                total_dist = abs(start_w - goal_w)
+                done_dist = abs(start_w - curr_w)
+
+                pct = (done_dist / total_dist * 100) if total_dist > 0 else 0
+
+                weight_progress = {
+                    "start_weight": start_w,
+                    "current_weight": curr_w,
+                    "goal_weight": goal_w,
+                    "percent": min(100, max(0, pct))
+                }
+
     return jsonify({
-        "ok": True,
-        "data": {
-            "user": user_data,
-            "diet": diet_data,
-            "fat_loss_progress": fat_loss_progress_data,
-            "progress_checkpoints": progress_checkpoints,
-            "latest_analysis": latest_analysis_data
-        }
-    })
+            "ok": True,
+            "data": {
+                "user": user_data,
+                "diet": diet_data,
+                "weight_progress": weight_progress,  # Новый объект прогресса
+                "fat_loss_progress": fat_loss_progress_data,
+                "progress_checkpoints": progress_checkpoints,
+                "latest_analysis": latest_analysis_data
+            }
+        })
 
 
 @app.route('/api/app/update_step_goal', methods=['POST'])
@@ -7457,6 +7479,30 @@ def get_weekly_stories(group_id):
             "has_stories": True,
             "stories": stories
         })
+
+
+@app.route('/api/user/set_weight_goal', methods=['POST'])
+@login_required
+def set_weight_goal():
+    user = get_current_user()
+    data = request.get_json()
+    new_goal = data.get('weight_goal')
+
+    if new_goal is None:
+        return jsonify({"ok": False, "error": "Цель не указана"}), 400
+
+    # ЛОГИКА: Находим последний замер веса в базе
+    last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+
+    if last_analysis:
+        # Текущий последний вес становится Точкой А
+        user.initial_body_analysis_id = last_analysis.id
+
+    # Устанавливаем новую Точку Б
+    user.weight_goal = float(new_goal)
+
+    db.session.commit()
+    return jsonify({"ok": True, "message": "Цель установлена, точка А обновлена"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -28,6 +28,7 @@ class User(db.Model):
     full_body_photo = db.relationship('UploadedFile', foreign_keys=[full_body_photo_id])
 
     # Цели
+    weight_goal = db.Column(db.Float, nullable=True)  # Точка Б (целевой вес)
     fat_mass_goal = db.Column(db.Float, nullable=True)
     muscle_mass_goal = db.Column(db.Float, nullable=True)
     # Новое поле:
