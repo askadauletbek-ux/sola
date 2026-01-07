@@ -3021,6 +3021,41 @@ def confirm_analysis():
     return redirect(url_for('profile'))
 
 
+@app.route('/api/app/update_weight_simple', methods=['POST'])
+@login_required
+def update_weight_simple():
+    user = get_current_user()
+    data = request.get_json()
+    new_weight = data.get('weight')
+
+    if new_weight is None:
+        return jsonify({"success": False, "error": "Вес не указан"}), 400
+
+    # 1. Берем последний замер, чтобы сохранить преемственность данных (рост, кости и т.д.)
+    last = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+
+    # 2. Создаем новую запись замера (промежуточный вес)
+    new_analysis = BodyAnalysis(
+        user_id=user.id,
+        timestamp=datetime.now(UTC),
+        weight=float(new_weight),
+        height=last.height if last else 170.0,
+        muscle_mass=last.muscle_mass if last else None,
+        fat_mass=last.fat_mass if last else None,
+        metabolism=last.metabolism if last else None,
+        bmi=float(new_weight) / ((last.height / 100) ** 2) if last and last.height else None
+    )
+
+    # 3. Если точка А еще не зафиксирована (после сброса целей), фиксируем текущий замер как стартовый
+    if not user.initial_body_analysis_id:
+        db.session.add(new_analysis)
+        db.session.flush()
+        user.initial_body_analysis_id = new_analysis.id
+    else:
+        db.session.add(new_analysis)
+
+    db.session.commit()
+    return jsonify({"success": True, "new_weight": new_weight})
 
 @app.route('/generate_telegram_code')
 def generate_telegram_code():
