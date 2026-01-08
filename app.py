@@ -1286,15 +1286,48 @@ def app_profile_data():
     progress_checkpoints = []
     latest_analysis_data = None
 
-    # Рассчитываем статус за последние 7 дней для визуализации сердечек
+    # Рассчитываем статус за последние 30 дней для календаря
     today = date.today()
-    last_7_days_status = []
-    # Идем от 6 дней назад до сегодня (слева направо: [День-6, ..., Сегодня])
-    for i in range(6, -1, -1):
-        d = today - timedelta(days=i)
-        # Проверяем наличие записи еды за этот день
-        has_log = db.session.query(MealLog.id).filter_by(user_id=user.id, date=d).first() is not None
-        last_7_days_status.append(has_log)
+    start_30_days = today - timedelta(days=30)
+
+    # 1. Еда: считаем количество приемов пищи по дням
+    # (1 прием = 0.25, 4 приема = 1.0)
+    meals_stats_query = db.session.query(
+        MealLog.date,
+        func.count(func.distinct(MealLog.meal_type))
+    ).filter(
+        MealLog.user_id == user.id,
+        MealLog.date >= start_30_days,
+        MealLog.date <= today
+    ).group_by(MealLog.date).all()
+
+    meals_map = {m[0].strftime("%Y-%m-%d"): min(1.0, m[1] * 0.25) for m in meals_stats_query}
+
+    # 2. Активность: шаги
+    step_goal = getattr(user, "step_goal", 10000) or 10000
+    activity_stats_query = db.session.query(Activity).filter(
+        Activity.user_id == user.id,
+        Activity.date >= start_30_days,
+        Activity.date <= today
+    ).all()
+
+    activity_map = {}
+    for act in activity_stats_query:
+        if step_goal > 0:
+            activity_map[act.date.strftime("%Y-%m-%d")] = min(1.0, (act.steps or 0) / step_goal)
+        else:
+            activity_map[act.date.strftime("%Y-%m-%d")] = 0.0
+
+    # Собираем общий словарь истории: "YYYY-MM-DD": {"meal": 0.5, "activity": 1.0}
+    calendar_history = {}
+    # Проходим по всем дням от start_30_days до today, чтобы заполнить нулями пропуски
+    for i in range(31):
+        d = start_30_days + timedelta(days=i)
+        d_str = d.strftime("%Y-%m-%d")
+        calendar_history[d_str] = {
+            "meal_progress": meals_map.get(d_str, 0.0),
+            "activity_progress": activity_map.get(d_str, 0.0)
+        }
 
     # --- СБОР ДАННЫХ ПОЛЬЗОВАТЕЛЯ ---
     # Мы используем .get(), чтобы не было ошибок, если в базе null
@@ -1308,7 +1341,7 @@ def app_profile_data():
         "is_trainer": bool(getattr(user, 'is_trainer', False)),
         "avatar_filename": user.avatar.filename if user.avatar else None,
         "current_streak": getattr(user, "current_streak", 0),
-        "last_7_days_status": last_7_days_status,
+        "calendar_history": calendar_history,  # <--- НОВОЕ ПОЛЕ
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000)
     }
