@@ -7498,6 +7498,13 @@ def api_set_weight_goal():
         if new_goal <= 0 or new_goal > 300:  # Разумные пределы
             return jsonify({"ok": False, "error": "Некорректный вес"}), 400
 
+        # --- ОБНОВЛЕНИЕ ТОЧКИ А ---
+        # Находим последний замер и делаем его стартовым для новой цели
+        last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+        if last_analysis:
+            user.initial_body_analysis_id = last_analysis.id
+        # ---------------------------
+
         user.weight_goal = new_goal
         db.session.commit()
 
