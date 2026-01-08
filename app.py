@@ -7481,6 +7481,132 @@ def get_weekly_stories(group_id):
         })
 
 
+# ------------------ WEIGHT GOAL API FOR FLUTTER ------------------
+
+@app.route('/api/app/set_weight_goal', methods=['POST'])
+@login_required
+def api_set_weight_goal():
+    """
+    Устанавливает целевой вес пользователя.
+    Принимает JSON: {"target_weight": 75.5}
+    """
+    user = get_current_user()
+    data = request.get_json(force=True, silent=True) or {}
+
+    try:
+        new_goal = float(data.get('target_weight', 0))
+        if new_goal <= 0 or new_goal > 300:  # Разумные пределы
+            return jsonify({"ok": False, "error": "Некорректный вес"}), 400
+
+        user.weight_goal = new_goal
+        db.session.commit()
+
+        # Аналитика
+        try:
+            from amplitude import BaseEvent
+            amplitude.track(BaseEvent(
+                event_type="Weight Goal Updated",
+                user_id=str(user.id),
+                event_properties={"new_goal": new_goal}
+            ))
+        except:
+            pass
+
+        return jsonify({"ok": True, "message": "Цель успешно обновлена", "weight_goal": new_goal})
+
+    except ValueError:
+        return jsonify({"ok": False, "error": "Значение должно быть числом"}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/app/weight_progress', methods=['GET'])
+@login_required
+def api_get_weight_progress():
+    """
+    Возвращает рассчитанный прогресс по весу для виджета во Flutter.
+    Логика идентична той, что мы обсуждали для веб-профиля.
+    """
+    user = get_current_user()
+
+    # 1. Проверяем наличие всех данных
+    latest_analysis = user.latest_analysis  # Используем property из модели
+    initial_analysis = db.session.get(BodyAnalysis,
+                                      user.initial_body_analysis_id) if user.initial_body_analysis_id else None
+
+    if not (initial_analysis and latest_analysis and latest_analysis.weight and user.weight_goal):
+        return jsonify({
+            "ok": True,
+            "has_data": False,
+            "message": "Необходимо сделать первый замер и установить цель."
+        })
+
+    try:
+        # 2. Базовые цифры
+        initial_weight = float(initial_analysis.weight)
+        last_measured_weight = float(latest_analysis.weight)
+        goal_weight = float(user.weight_goal)
+
+        # 3. Расчет "умного" текущего веса (Прогноз на основе дефицита калорий после замера)
+        # Если не хотите усложнять, можно просто использовать last_measured_weight
+
+        start_datetime = latest_analysis.timestamp
+        # --- БЛОК ПРОГНОЗА (Упрощенный для API) ---
+        # Считаем калории, съеденные ПОСЛЕ последнего замера
+        total_consumed = db.session.query(func.sum(MealLog.calories)).filter(
+            MealLog.user_id == user.id,
+            MealLog.created_at >= start_datetime
+        ).scalar() or 0
+
+        # Считаем активность ПОСЛЕ последнего замера (условно считаем по дням)
+        total_active_burn = db.session.query(func.sum(Activity.active_kcal)).filter(
+            Activity.user_id == user.id,
+            Activity.date >= start_datetime.date()
+        ).scalar() or 0
+
+        # Метаболизм за прошедшие дни (включая сегодня)
+        days_passed = (datetime.utcnow() - start_datetime).days
+        total_metabolism = (latest_analysis.metabolism or 1500) * (days_passed + 0.5)  # +0.5 за текущий день
+
+        # Дефицит
+        total_deficit = (total_metabolism + total_active_burn) - total_consumed
+
+        # 7700 ккал = 1 кг веса
+        estimated_lost_kg = total_deficit / 7700
+
+        # Текущий вес (прогноз)
+        current_weight = last_measured_weight - estimated_lost_kg
+        # ------------------------------------------
+
+        # 4. Расчет прогресса
+        total_diff = initial_weight - goal_weight  # Сколько всего надо скинуть/набрать
+        diff_done = initial_weight - current_weight  # Сколько уже прошли
+
+        percentage = 0.0
+        if abs(total_diff) > 0.1:  # Защита от деления на ноль
+            percentage = (diff_done / total_diff) * 100
+
+        percentage = min(100.0, max(0.0, percentage))
+
+        return jsonify({
+            "ok": True,
+            "has_data": True,
+            "data": {
+                "percentage": round(percentage, 1),  # 0..100
+                "current_kg": round(current_weight, 1),  # Текущий вес (расчетный)
+                "initial_kg": round(initial_weight, 1),  # Старт
+                "goal_kg": round(goal_weight, 1),  # Цель
+                "total_change_needed": round(total_diff, 1),  # Всего сбросить
+                "already_changed": round(diff_done, 1),  # Уже сброшено
+                "remaining": round(current_weight - goal_weight, 1)  # Осталось
+            }
+        })
+
+    except Exception as e:
+        print(f"Error in weight API: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route('/api/user/set_weight_goal', methods=['POST'])
 @login_required
 def set_weight_goal():
