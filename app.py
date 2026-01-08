@@ -1290,20 +1290,33 @@ def app_profile_data():
     today = date.today()
     start_30_days = today - timedelta(days=30)
 
-    # 1. Еда: считаем количество приемов пищи по дням
-    # (1 прием = 0.25, 4 приема = 1.0)
+    # 1. Еда: считаем количество приемов пищи, СУММУ калорий и БЖУ
     meals_stats_query = db.session.query(
         MealLog.date,
-        func.count(func.distinct(MealLog.meal_type))
+        func.count(func.distinct(MealLog.meal_type)),  # 0: Кол-во приемов
+        func.sum(MealLog.calories),  # 1: Калории
+        func.sum(MealLog.protein),  # 2: Белки
+        func.sum(MealLog.fat),  # 3: Жиры
+        func.sum(MealLog.carbs)  # 4: Углеводы
     ).filter(
         MealLog.user_id == user.id,
         MealLog.date >= start_30_days,
         MealLog.date <= today
     ).group_by(MealLog.date).all()
 
-    meals_map = {m[0].strftime("%Y-%m-%d"): min(1.0, m[1] * 0.25) for m in meals_stats_query}
+    # Формируем словарь данных по еде
+    meals_detailed_map = {}
+    for row in meals_stats_query:
+        d_str = row[0].strftime("%Y-%m-%d")
+        meals_detailed_map[d_str] = {
+            "count": row[1],
+            "calories": int(row[2] or 0),
+            "protein": int(row[3] or 0),
+            "fat": int(row[4] or 0),
+            "carbs": int(row[5] or 0)
+        }
 
-    # 2. Активность: шаги
+    # 2. Активность: шаги и сожженные калории
     step_goal = getattr(user, "step_goal", 10000) or 10000
     activity_stats_query = db.session.query(Activity).filter(
         Activity.user_id == user.id,
@@ -1311,22 +1324,44 @@ def app_profile_data():
         Activity.date <= today
     ).all()
 
-    activity_map = {}
+    activity_detailed_map = {}
     for act in activity_stats_query:
-        if step_goal > 0:
-            activity_map[act.date.strftime("%Y-%m-%d")] = min(1.0, (act.steps or 0) / step_goal)
-        else:
-            activity_map[act.date.strftime("%Y-%m-%d")] = 0.0
+        d_str = act.date.strftime("%Y-%m-%d")
+        activity_detailed_map[d_str] = {
+            "steps": act.steps or 0,
+            "burned_kcal": act.active_kcal or 0,
+            "distance_m": int((act.distance_km or 0) * 1000)
+        }
 
-    # Собираем общий словарь истории: "YYYY-MM-DD": {"meal": 0.5, "activity": 1.0}
+    # Собираем общий словарь истории с полными данными
     calendar_history = {}
-    # Проходим по всем дням от start_30_days до today, чтобы заполнить нулями пропуски
     for i in range(31):
         d = start_30_days + timedelta(days=i)
         d_str = d.strftime("%Y-%m-%d")
+
+        m_data = meals_detailed_map.get(d_str, {})
+        a_data = activity_detailed_map.get(d_str, {})
+
+        # Расчет прогресса для колец (как раньше)
+        meal_progress = min(1.0, m_data.get("count", 0) * 0.25)
+
+        steps = a_data.get("steps", 0)
+        activity_progress = 0.0
+        if step_goal > 0:
+            activity_progress = min(1.0, steps / step_goal)
+
         calendar_history[d_str] = {
-            "meal_progress": meals_map.get(d_str, 0.0),
-            "activity_progress": activity_map.get(d_str, 0.0)
+            # Проценты для UI
+            "meal_progress": meal_progress,
+            "activity_progress": activity_progress,
+            # Реальные данные для Dashboard
+            "calories": m_data.get("calories", 0),
+            "protein": m_data.get("protein", 0),
+            "fat": m_data.get("fat", 0),
+            "carbs": m_data.get("carbs", 0),
+            "steps": steps,
+            "burned_kcal": a_data.get("burned_kcal", 0),
+            "distance_m": a_data.get("distance_m", 0)
         }
 
     # --- СБОР ДАННЫХ ПОЛЬЗОВАТЕЛЯ ---
