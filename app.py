@@ -7873,13 +7873,12 @@ def admin_create_recipe():
                 content_type=file.mimetype,
                 data=file_data,
                 size=len(file_data),
-                user_id=current_user.id
+                user_id=get_current_user().id  # <--- ИСПРАВЛЕНО ЗДЕСЬ
             )
             db.session.add(new_file)
             db.session.flush()  # Чтобы файл записался и был доступен
 
             # Генерируем ссылку для API
-            # Используем _external=True для полного пути, или относительный, как удобно фронту
             image_url = url_for('serve_file', filename=unique_filename, _external=True)
 
         # 3. Парсинг JSON полей
@@ -7973,7 +7972,7 @@ def admin_manage_recipe(r_id):
             if 'is_active' in data:
                 recipe.is_active = bool(data['is_active'])
 
-            # Если прислали URL картинки строкой (например, удалили картинку и прислали null)
+            # Если прислали URL картинки строкой
             if 'image_url' in data:
                 recipe.image_url = data['image_url']
 
@@ -7998,7 +7997,6 @@ def admin_manage_recipe(r_id):
                 recipe.prep_time_minutes = int(request.form.get('prep_time_minutes'))
 
             if request.form.get('is_active') is not None:
-                # 'true'/'1' -> True, иначе False
                 val = request.form.get('is_active').lower()
                 recipe.is_active = (val in ['true', '1', 'on'])
 
@@ -8027,7 +8025,7 @@ def admin_manage_recipe(r_id):
                     content_type=file.mimetype,
                     data=file_data,
                     size=len(file_data),
-                    user_id=current_user.id
+                    user_id=get_current_user().id  # <--- ИСПРАВЛЕНО ЗДЕСЬ
                 )
                 db.session.add(new_file)
                 db.session.flush()
