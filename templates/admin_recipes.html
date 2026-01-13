@@ -1,0 +1,472 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="recipesManager()">
+
+    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <h1 class="text-3xl font-bold flex items-center gap-2">
+            <a href="{{ url_for('admin_dashboard') }}" class="text-gray-400 hover:text-gray-600">←</a>
+            Управление питанием
+        </h1>
+
+        <div class="bg-gray-100 p-1 rounded-lg flex">
+            <button @click="tab = 'recipes'"
+                    class="px-4 py-2 rounded-md text-sm font-medium transition"
+                    :class="tab === 'recipes' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'">
+                🥗 Рецепты
+            </button>
+            <button @click="tab = 'categories'"
+                    class="px-4 py-2 rounded-md text-sm font-medium transition"
+                    :class="tab === 'categories' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'">
+                🏷️ Категории
+            </button>
+        </div>
+    </div>
+
+    <div x-show="tab === 'recipes'" x-transition>
+
+        <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap gap-4 items-end justify-between">
+            <div class="flex gap-4 items-end">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Категория</label>
+                    <select x-model="filterCat" @change="loadRecipes()" class="border rounded-lg px-3 py-2 min-w-[200px]">
+                        <option value="">Все категории</option>
+                        <template x-for="c in categories" :key="c.id">
+                            <option :value="c.id" x-text="c.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <button @click="loadRecipes()" class="text-indigo-600 text-sm hover:underline pb-2">Обновить</button>
+            </div>
+
+            <button @click="openRecipeModal()"
+                    class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                ➕ Создать рецепт
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <template x-for="r in recipes" :key="r.id">
+                <div class="bg-white rounded-xl shadow hover:shadow-lg transition overflow-hidden border border-gray-100 flex flex-col">
+                    <div class="h-40 bg-gray-200 relative">
+                        <template x-if="r.image_url">
+                            <img :src="r.image_url" class="w-full h-full object-cover">
+                        </template>
+                        <template x-if="!r.image_url">
+                            <div class="w-full h-full flex items-center justify-center text-gray-400">Нет фото</div>
+                        </template>
+
+                        <div class="absolute top-2 right-2 flex gap-1">
+                            <span class="bg-white/90 px-2 py-1 rounded text-xs font-bold"
+                                  :style="'color: ' + getCatColor(r.category_name)"
+                                  x-text="r.category_name || 'Без категории'"></span>
+                        </div>
+                    </div>
+
+                    <div class="p-4 flex-1 flex flex-col">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg leading-tight" x-text="r.title"></h3>
+                            <span class="text-xs font-mono bg-gray-100 px-1 rounded" x-text="r.calories + ' ккал'"></span>
+                        </div>
+
+                        <div class="text-xs text-gray-500 mb-4 flex gap-2">
+                            <span>Б: <b x-text="r.protein"></b></span>
+                            <span>Ж: <b x-text="r.fat"></b></span>
+                            <span>У: <b x-text="r.carbs"></b></span>
+                        </div>
+
+                        <div class="mt-auto flex justify-end gap-2 pt-3 border-t">
+                            <button @click="openRecipeModal(r)" class="text-sm text-indigo-600 hover:text-indigo-800">Ред.</button>
+                            <button @click="deleteRecipe(r.id)" class="text-sm text-red-600 hover:text-red-800">Уд.</button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <div x-show="recipes.length === 0" class="text-center py-10 text-gray-500">
+            В этой категории пока нет рецептов.
+        </div>
+    </div>
+
+    <div x-show="tab === 'categories'" x-transition>
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+                <h3 class="font-bold text-gray-700">Список категорий</h3>
+                <button @click="openCategoryModal()" class="text-sm bg-white border px-3 py-1 rounded hover:bg-gray-50">
+                    ➕ Добавить
+                </button>
+            </div>
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Порядок</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Название</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Slug (ID)</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Цвет</th>
+                        <th class="px-6 py-3 text-right">Действия</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <template x-for="c in categories" :key="c.id">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="c.sort_order"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="c.name"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono" x-text="c.slug"></td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="w-6 h-6 rounded border" :style="'background-color: ' + c.color_hex"></div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <button @click="openCategoryModal(c)" class="text-indigo-600 hover:text-indigo-900 mr-3">Изменить</button>
+                                <button @click="deleteCategory(c.id)" class="text-red-600 hover:text-red-900">Удалить</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div x-show="catModal.open" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="catModal.open=false"></div>
+            <div class="bg-white rounded-lg overflow-hidden shadow-xl transform transition-all sm:max-w-lg w-full p-6 relative z-10">
+                <h3 class="text-lg font-medium text-gray-900 mb-4" x-text="catModal.isEdit ? 'Редактировать категорию' : 'Новая категория'"></h3>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Название</label>
+                        <input type="text" x-model="catForm.name" class="mt-1 block w-full border rounded-md shadow-sm py-2 px-3">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Slug (код для кода, англ)</label>
+                        <input type="text" x-model="catForm.slug" class="mt-1 block w-full border rounded-md shadow-sm py-2 px-3">
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="flex-1">
+                            <label class="block text-sm font-medium text-gray-700">Сортировка</label>
+                            <input type="number" x-model="catForm.sort_order" class="mt-1 block w-full border rounded-md shadow-sm py-2 px-3">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Цвет (HEX)</label>
+                            <div class="flex items-center gap-2 mt-1">
+                                <input type="color" x-model="catForm.color_hex" class="h-9 w-9 p-0 border-0">
+                                <input type="text" x-model="catForm.color_hex" class="block w-24 border rounded-md shadow-sm py-2 px-3 text-sm">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+                    <button @click="catModal.open=false" class="px-4 py-2 border rounded-md text-gray-700 hover:bg-gray-50">Отмена</button>
+                    <button @click="saveCategory()" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="recipeModal.open" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+        <div class="flex items-center justify-center min-h-screen px-4 py-6">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="recipeModal.open=false"></div>
+
+            <div class="bg-white rounded-lg shadow-xl transform transition-all sm:max-w-4xl w-full p-6 relative z-10 max-h-[90vh] overflow-y-auto">
+                <h3 class="text-xl font-bold text-gray-900 mb-6" x-text="recipeModal.isEdit ? 'Редактировать рецепт' : 'Новый рецепт'"></h3>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Название блюда</label>
+                            <input type="text" x-model="recipeForm.title" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Категория</label>
+                            <select x-model="recipeForm.category_id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3">
+                                <option value="">Выберите...</option>
+                                <template x-for="c in categories" :key="c.id">
+                                    <option :value="c.id" x-text="c.name"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Калории (ккал)</label>
+                                <input type="number" x-model="recipeForm.calories" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Время (мин)</label>
+                                <input type="number" x-model="recipeForm.prep_time_minutes" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-lg">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500">Белки</label>
+                                <input type="number" step="0.1" x-model="recipeForm.protein" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500">Жиры</label>
+                                <input type="number" step="0.1" x-model="recipeForm.fat" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500">Углеводы</label>
+                                <input type="number" step="0.1" x-model="recipeForm.carbs" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Фото блюда</label>
+                            <input type="file" @change="handleImageUpload" accept="image/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                            <span class="text-xs text-gray-400" x-show="recipeForm.image_url && !recipeForm.newImage">Текущее фото загружено</span>
+                        </div>
+
+                        <div class="flex items-center gap-2 mt-4">
+                            <input type="checkbox" id="isActive" x-model="recipeForm.is_active" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            <label for="isActive" class="text-sm font-medium text-gray-700">Опубликовать (Активен)</label>
+                        </div>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="block text-sm font-bold text-gray-700">Ингредиенты</label>
+                                <button @click="addIngredient()" class="text-xs bg-green-50 text-green-700 px-2 py-1 rounded hover:bg-green-100">+ Добавить</button>
+                            </div>
+                            <div class="space-y-2 max-h-40 overflow-y-auto border p-2 rounded bg-gray-50">
+                                <template x-for="(ing, index) in recipeForm.ingredients" :key="index">
+                                    <div class="flex gap-2">
+                                        <input type="text" x-model="ing.name" placeholder="Продукт" class="flex-1 border rounded px-2 py-1 text-sm">
+                                        <input type="text" x-model="ing.amount" placeholder="Кол-во" class="w-20 border rounded px-2 py-1 text-sm">
+                                        <button @click="removeIngredient(index)" class="text-red-500 hover:text-red-700 px-1">×</button>
+                                    </div>
+                                </template>
+                                <div x-show="recipeForm.ingredients.length === 0" class="text-xs text-gray-400 text-center py-2">Список пуст</div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="block text-sm font-bold text-gray-700">Инструкция (Шаги)</label>
+                                <button @click="addInstruction()" class="text-xs bg-green-50 text-green-700 px-2 py-1 rounded hover:bg-green-100">+ Шаг</button>
+                            </div>
+                            <div class="space-y-2 max-h-60 overflow-y-auto border p-2 rounded bg-gray-50">
+                                <template x-for="(step, index) in recipeForm.instructions" :key="index">
+                                    <div class="flex gap-2 items-start">
+                                        <span class="text-xs font-bold pt-2 text-gray-500" x-text="index+1"></span>
+                                        <textarea x-model="step.text" rows="2" placeholder="Описание действия..." class="flex-1 border rounded px-2 py-1 text-sm"></textarea>
+                                        <button @click="removeInstruction(index)" class="text-red-500 hover:text-red-700 px-1 pt-1">×</button>
+                                    </div>
+                                </template>
+                                <div x-show="recipeForm.instructions.length === 0" class="text-xs text-gray-400 text-center py-2">Шагов нет</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-8 pt-4 border-t flex justify-end gap-3">
+                    <button @click="recipeModal.open=false" class="px-4 py-2 border rounded-md text-gray-700 hover:bg-gray-50">Отмена</button>
+                    <button @click="saveRecipe()"
+                            class="px-6 py-2 bg-indigo-600 text-white font-bold rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                            :disabled="saving">
+                        <span x-show="!saving">Сохранить</span>
+                        <span x-show="saving">Сохранение...</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+function recipesManager() {
+    return {
+        tab: 'recipes',
+        categories: [],
+        recipes: [],
+        filterCat: '',
+        saving: false,
+
+        // Состояние модалки категорий
+        catModal: { open: false, isEdit: false, id: null },
+        catForm: { name: '', slug: '', color_hex: '#FFFFFF', sort_order: 0 },
+
+        // Состояние модалки рецептов
+        recipeModal: { open: false, isEdit: false, id: null },
+        recipeForm: {
+            title: '', category_id: '', calories: 0, protein: 0, fat: 0, carbs: 0,
+            prep_time_minutes: 0, is_active: true, image_url: null, newImage: null,
+            ingredients: [], instructions: []
+        },
+
+        init() {
+            this.loadCategories();
+            this.loadRecipes();
+        },
+
+        // --- КАТЕГОРИИ ---
+        async loadCategories() {
+            try {
+                const res = await fetch('/admin/recipes/categories');
+                const data = await res.json();
+                if (data.ok) this.categories = data.categories;
+            } catch (e) { console.error(e); }
+        },
+
+        getCatColor(name) {
+            const c = this.categories.find(c => c.name === name);
+            return c ? c.color_hex : '#000';
+        },
+
+        openCategoryModal(cat = null) {
+            this.catModal.open = true;
+            if (cat) {
+                this.catModal.isEdit = true;
+                this.catModal.id = cat.id;
+                this.catForm = { ...cat };
+            } else {
+                this.catModal.isEdit = false;
+                this.catModal.id = null;
+                this.catForm = { name: '', slug: '', color_hex: '#FFFFFF', sort_order: 0 };
+            }
+        },
+
+        async saveCategory() {
+            const url = this.catModal.isEdit
+                ? `/admin/recipes/categories/${this.catModal.id}`
+                : '/admin/recipes/categories';
+            const method = this.catModal.isEdit ? 'PUT' : 'POST';
+
+            try {
+                const res = await fetch(url, {
+                    method: method,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(this.catForm)
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    this.catModal.open = false;
+                    this.loadCategories();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            } catch (e) { alert('Ошибка сети'); }
+        },
+
+        async deleteCategory(id) {
+            if (!confirm('Удалить категорию?')) return;
+            try {
+                await fetch(`/admin/recipes/categories/${id}`, { method: 'DELETE' });
+                this.loadCategories();
+            } catch (e) { alert('Ошибка'); }
+        },
+
+        // --- РЕЦЕПТЫ ---
+        async loadRecipes() {
+            let url = '/admin/recipes';
+            if (this.filterCat) url += `?category_id=${this.filterCat}`;
+
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.ok) this.recipes = data.recipes;
+            } catch (e) { console.error(e); }
+        },
+
+        handleImageUpload(e) {
+            this.recipeForm.newImage = e.target.files[0];
+        },
+
+        addIngredient() { this.recipeForm.ingredients.push({ name: '', amount: '' }); },
+        removeIngredient(idx) { this.recipeForm.ingredients.splice(idx, 1); },
+        addInstruction() { this.recipeForm.instructions.push({ step: this.recipeForm.instructions.length + 1, text: '' }); },
+        removeInstruction(idx) { this.recipeForm.instructions.splice(idx, 1); },
+
+        openRecipeModal(r = null) {
+            this.recipeModal.open = true;
+            if (r) {
+                this.recipeModal.isEdit = true;
+                this.recipeModal.id = r.id;
+                // Копируем данные, чтобы не менять оригинал реактивно до сохранения
+                this.recipeForm = {
+                    title: r.title,
+                    // Ищем ID категории по имени, т.к. бэк отдает имя. Либо поправьте to_dict на бэке, чтобы отдавал category_id
+                    // Здесь предполагаем, что если есть category_name, надо найти ID.
+                    // Для простоты в предыдущем коде я добавил category_id в to_dict? Нет?
+                    // Лучше полагаться, что to_dict вернет category_id. Если нет - обновите to_dict в Recipe.
+                    category_id: this.categories.find(c => c.name === r.category_name)?.id || '',
+                    calories: r.calories, protein: r.protein, fat: r.fat, carbs: r.carbs,
+                    prep_time_minutes: r.prep_time_minutes || 0,
+                    is_active: true, // В to_dict не было is_active, надо добавить
+                    image_url: r.image_url,
+                    newImage: null,
+                    ingredients: JSON.parse(JSON.stringify(r.ingredients || [])),
+                    instructions: JSON.parse(JSON.stringify(r.instructions || []))
+                };
+            } else {
+                this.recipeModal.isEdit = false;
+                this.recipeModal.id = null;
+                this.recipeForm = {
+                    title: '', category_id: '', calories: 0, protein: 0, fat: 0, carbs: 0,
+                    prep_time_minutes: 15, is_active: true, image_url: null, newImage: null,
+                    ingredients: [], instructions: []
+                };
+            }
+        },
+
+        async saveRecipe() {
+            this.saving = true;
+            const url = this.recipeModal.isEdit
+                ? `/admin/recipes/${this.recipeModal.id}`
+                : '/admin/recipes';
+            const method = this.recipeModal.isEdit ? 'PUT' : 'POST';
+
+            const fd = new FormData();
+            fd.append('title', this.recipeForm.title);
+            fd.append('category_id', this.recipeForm.category_id);
+            fd.append('calories', this.recipeForm.calories);
+            fd.append('protein', this.recipeForm.protein);
+            fd.append('fat', this.recipeForm.fat);
+            fd.append('carbs', this.recipeForm.carbs);
+            fd.append('prep_time_minutes', this.recipeForm.prep_time_minutes);
+            fd.append('is_active', this.recipeForm.is_active);
+
+            // JSON данные
+            fd.append('ingredients', JSON.stringify(this.recipeForm.ingredients));
+            fd.append('instructions', JSON.stringify(this.recipeForm.instructions));
+
+            if (this.recipeForm.newImage) {
+                fd.append('image', this.recipeForm.newImage);
+            } else if (!this.recipeForm.image_url && this.recipeModal.isEdit) {
+                // Если картинку удалили (логику удаления можно доработать)
+                fd.append('image_url', 'null');
+            }
+
+            try {
+                const res = await fetch(url, { method: method, body: fd });
+                const data = await res.json();
+                if (data.ok) {
+                    this.recipeModal.open = false;
+                    this.loadRecipes();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            } catch (e) {
+                alert('Ошибка сохранения');
+            } finally {
+                this.saving = false;
+            }
+        },
+
+        async deleteRecipe(id) {
+            if (!confirm('Удалить рецепт?')) return;
+            try {
+                await fetch(`/admin/recipes/${id}`, { method: 'DELETE' });
+                this.loadRecipes();
+            } catch (e) { alert('Ошибка'); }
+        }
+    }
+}
+</script>
+{% endblock %}

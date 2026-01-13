@@ -32,7 +32,8 @@
     broadcast: "{{ url_for('admin_broadcast') }}",
     audit: "{{ url_for('admin_audit') }}",
     reports: "{{ url_for('admin_reports') }}",
-    analytics: "{{ url_for('admin_analytics_page') }}"
+    analytics: "{{ url_for('admin_analytics_page') }}",
+    recipes: "{{ url_for('admin_recipes_page') }}" // <--- НОВОЕ
   };
 </script>
 
@@ -58,7 +59,7 @@
       <a :href="urls.broadcast" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">📣 Рассылка</a>
       <a :href="urls.reports" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700">🛡️ Жалобы</a>
       <a :href="urls.audit" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-600 text-white hover:bg-gray-700">📜 Аудит</a>
-      <a :href="urls.analytics" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700">📈 Аналитика</a>
+      <a :href="urls.recipes" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-600 text-white hover:bg-pink-700">🥗 Рецепты</a> <a :href="urls.analytics" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700">📈 Аналитика</a>
     </div>
   </div>
 

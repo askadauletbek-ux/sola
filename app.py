@@ -101,7 +101,7 @@ from models import (
     User, Subscription, Order, Group, GroupMember, GroupMessage, MessageReaction,
     GroupTask, MealLog, Activity, Diet, Training, TrainingSignup, BodyAnalysis,
     UserSettings, MealReminderLog, AuditLog, PromptTemplate, UploadedFile,
-    UserAchievement, MessageReport, AnalyticsEvent)
+    UserAchievement, MessageReport, AnalyticsEvent, RecipeCategory, Recipe)
 
 # <-- Добавьте это ниже импортов models
 from achievements_engine import check_all_achievements, ACHIEVEMENTS_METADATA
@@ -7705,5 +7705,346 @@ def set_weight_goal():
     db.session.commit()
     return jsonify({"ok": True, "message": "Цель установлена, точка А обновлена"})
 
+
+# ------------------ RECIPES MANAGEMENT API ------------------
+
+# 1. API ДЛЯ ПРИЛОЖЕНИЯ (FLUTTER)
+@app.route('/api/recipes/catalog', methods=['GET'])
+@login_required
+def get_recipes_catalog():
+    """
+    Возвращает список категорий с вложенными рецептами.
+    Используется в приложении для отображения экрана питания.
+    """
+    categories = RecipeCategory.query.order_by(RecipeCategory.sort_order.asc()).all()
+    result = []
+
+    for cat in categories:
+        # Берем только активные рецепты для этой категории
+        recipes = Recipe.query.filter_by(category_id=cat.id, is_active=True).all()
+
+        # Если в категории нет рецептов, можно пропускать или отправлять пустой список
+        # В данном случае отправляем, даже если пусто, но можно добавить if recipes:
+
+        recipes_data = []
+        for r in recipes:
+            recipes_data.append(r.to_dict())
+
+        result.append({
+            "category_name": cat.name,
+            "category_slug": cat.slug,
+            "category_color": cat.color_hex,
+            "recipes": recipes_data
+        })
+
+    return jsonify({"ok": True, "catalog": result})
+
+
+# 2. АДМИНКА: КАТЕГОРИИ
+
+@app.route('/admin/recipes/categories', methods=['GET'])
+@admin_required
+def admin_list_categories():
+    cats = RecipeCategory.query.order_by(RecipeCategory.sort_order.asc()).all()
+    return jsonify({
+        "ok": True,
+        "categories": [{
+            "id": c.id,
+            "name": c.name,
+            "slug": c.slug,
+            "color_hex": c.color_hex,
+            "sort_order": c.sort_order
+        } for c in cats]
+    })
+
+
+@app.route('/admin/recipes/categories', methods=['POST'])
+@admin_required
+def admin_create_category():
+    data = request.get_json(force=True, silent=True) or {}
+
+    name = data.get('name')
+    slug = data.get('slug')
+
+    if not name or not slug:
+        return jsonify({"ok": False, "error": "Name and Slug are required"}), 400
+
+    cat = RecipeCategory(
+        name=name,
+        slug=slug,
+        color_hex=data.get('color_hex', '#FFFFFF'),
+        sort_order=int(data.get('sort_order', 0))
+    )
+
+    try:
+        db.session.add(cat)
+        db.session.commit()
+        return jsonify({"ok": True, "id": cat.id})
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Slug already exists"}), 400
+
+
+@app.route('/admin/recipes/categories/<int:cat_id>', methods=['PUT', 'DELETE'])
+@admin_required
+def admin_manage_category(cat_id):
+    cat = db.session.get(RecipeCategory, cat_id)
+    if not cat:
+        return jsonify({"ok": False, "error": "Category not found"}), 404
+
+    if request.method == 'DELETE':
+        # При удалении категории рецепты не удаляются, а получают category_id=NULL (из-за SET NULL в модели)
+        db.session.delete(cat)
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Category deleted"})
+
+    # PUT (Update)
+    data = request.get_json(force=True, silent=True) or {}
+
+    if 'name' in data:
+        cat.name = data['name']
+    if 'slug' in data:
+        cat.slug = data['slug']
+    if 'color_hex' in data:
+        cat.color_hex = data['color_hex']
+    if 'sort_order' in data:
+        cat.sort_order = int(data['sort_order'])
+
+    try:
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Category updated"})
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Slug conflict"}), 400
+
+
+# 3. АДМИНКА: РЕЦЕПТЫ
+
+@app.route('/admin/recipes', methods=['GET'])
+@admin_required
+def admin_list_recipes():
+    # Фильтрация по категории ?category_id=1
+    cat_id = request.args.get('category_id')
+    query = Recipe.query
+    if cat_id:
+        query = query.filter_by(category_id=int(cat_id))
+
+    # Сортируем: сначала новые
+    recipes = query.order_by(Recipe.created_at.desc()).all()
+    return jsonify({
+        "ok": True,
+        "recipes": [r.to_dict() for r in recipes]
+    })
+
+
+@app.route('/admin/recipes', methods=['POST'])
+@admin_required
+def admin_create_recipe():
+    """
+    Создает рецепт.
+    Ожидает multipart/form-data, чтобы можно было загрузить картинку.
+    Сложные поля (ingredients, instructions) ожидаются в виде JSON-строк.
+    """
+    try:
+        # 1. Текстовые поля и числа
+        title = request.form.get('title')
+        cat_id = request.form.get('category_id')
+
+        if not title:
+            return jsonify({"ok": False, "error": "Title required"}), 400
+
+        calories = int(request.form.get('calories', 0))
+        protein = float(request.form.get('protein', 0))
+        fat = float(request.form.get('fat', 0))
+        carbs = float(request.form.get('carbs', 0))
+        prep_time_minutes = int(request.form.get('prep_time_minutes', 0))
+
+        # 2. Обработка файла (Картинка блюда)
+        image_url = None
+        file = request.files.get('image')
+        if file and file.filename:
+            filename = secure_filename(file.filename)
+            # Генерируем уникальное имя
+            unique_filename = f"recipe_{uuid.uuid4().hex}_{filename}"
+
+            file_data = file.read()
+            new_file = UploadedFile(
+                filename=unique_filename,
+                content_type=file.mimetype,
+                data=file_data,
+                size=len(file_data),
+                user_id=current_user.id
+            )
+            db.session.add(new_file)
+            db.session.flush()  # Чтобы файл записался и был доступен
+
+            # Генерируем ссылку для API
+            # Используем _external=True для полного пути, или относительный, как удобно фронту
+            image_url = url_for('serve_file', filename=unique_filename, _external=True)
+
+        # 3. Парсинг JSON полей
+        ingredients = []
+        instructions = []
+
+        # Получаем данные как строки и пытаемся распарсить
+        raw_ingredients = request.form.get('ingredients')
+        if raw_ingredients:
+            try:
+                ingredients = json.loads(raw_ingredients)
+            except Exception as e:
+                print(f"JSON Error ingredients: {e}")
+                # Если ошибка, оставим пустым списком
+
+        raw_instructions = request.form.get('instructions')
+        if raw_instructions:
+            try:
+                instructions = json.loads(raw_instructions)
+            except Exception as e:
+                print(f"JSON Error instructions: {e}")
+
+        # 4. Создание объекта
+        recipe = Recipe(
+            category_id=int(cat_id) if cat_id else None,
+            title=title,
+            image_url=image_url,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
+            prep_time_minutes=prep_time_minutes,
+            ingredients=ingredients,
+            instructions=instructions,
+            is_active=True
+        )
+
+        db.session.add(recipe)
+        db.session.commit()
+
+        return jsonify({"ok": True, "recipe": recipe.to_dict()})
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error creating recipe: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/admin/recipes/<int:r_id>', methods=['PUT', 'DELETE'])
+@admin_required
+def admin_manage_recipe(r_id):
+    recipe = db.session.get(Recipe, r_id)
+    if not recipe:
+        return jsonify({"ok": False, "error": "Recipe not found"}), 404
+
+    if request.method == 'DELETE':
+        db.session.delete(recipe)
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Recipe deleted"})
+
+    # PUT (Редактирование)
+    try:
+        # Сценарий 1: Пришел JSON (обновление данных без картинки)
+        if request.is_json:
+            data = request.get_json()
+
+            if 'title' in data:
+                recipe.title = data['title']
+            if 'category_id' in data:
+                recipe.category_id = int(data['category_id']) if data['category_id'] else None
+
+            if 'calories' in data:
+                recipe.calories = int(data['calories'])
+            if 'protein' in data:
+                recipe.protein = float(data['protein'])
+            if 'fat' in data:
+                recipe.fat = float(data['fat'])
+            if 'carbs' in data:
+                recipe.carbs = float(data['carbs'])
+
+            if 'prep_time_minutes' in data:
+                recipe.prep_time_minutes = int(data['prep_time_minutes'])
+
+            if 'ingredients' in data:
+                # Если пришел уже список (от JS фронтенда), сохраняем как есть
+                recipe.ingredients = data['ingredients']
+
+            if 'instructions' in data:
+                recipe.instructions = data['instructions']
+
+            if 'is_active' in data:
+                recipe.is_active = bool(data['is_active'])
+
+            # Если прислали URL картинки строкой (например, удалили картинку и прислали null)
+            if 'image_url' in data:
+                recipe.image_url = data['image_url']
+
+        # Сценарий 2: Пришел Multipart Form (возможно с файлом)
+        else:
+            if request.form.get('title'):
+                recipe.title = request.form.get('title')
+            if request.form.get('category_id'):
+                cid = request.form.get('category_id')
+                recipe.category_id = int(cid) if cid and cid != 'null' else None
+
+            if request.form.get('calories') is not None:
+                recipe.calories = int(request.form.get('calories'))
+            if request.form.get('protein') is not None:
+                recipe.protein = float(request.form.get('protein'))
+            if request.form.get('fat') is not None:
+                recipe.fat = float(request.form.get('fat'))
+            if request.form.get('carbs') is not None:
+                recipe.carbs = float(request.form.get('carbs'))
+
+            if request.form.get('prep_time_minutes') is not None:
+                recipe.prep_time_minutes = int(request.form.get('prep_time_minutes'))
+
+            if request.form.get('is_active') is not None:
+                # 'true'/'1' -> True, иначе False
+                val = request.form.get('is_active').lower()
+                recipe.is_active = (val in ['true', '1', 'on'])
+
+            # JSON поля из формы (приходят строками)
+            if request.form.get('ingredients'):
+                try:
+                    recipe.ingredients = json.loads(request.form.get('ingredients'))
+                except:
+                    pass
+
+            if request.form.get('instructions'):
+                try:
+                    recipe.instructions = json.loads(request.form.get('instructions'))
+                except:
+                    pass
+
+            # Картинка
+            file = request.files.get('image')
+            if file and file.filename:
+                filename = secure_filename(file.filename)
+                unique_filename = f"recipe_{uuid.uuid4().hex}_{filename}"
+
+                file_data = file.read()
+                new_file = UploadedFile(
+                    filename=unique_filename,
+                    content_type=file.mimetype,
+                    data=file_data,
+                    size=len(file_data),
+                    user_id=current_user.id
+                )
+                db.session.add(new_file)
+                db.session.flush()
+                # Обновляем ссылку
+                recipe.image_url = url_for('serve_file', filename=unique_filename, _external=True)
+
+        db.session.commit()
+        return jsonify({"ok": True, "recipe": recipe.to_dict()})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# В app.py добавьте этот роут:
+@app.route("/admin/recipes/page")
+@admin_required
+def admin_recipes_page():
+    return render_template("admin_recipes.html")
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

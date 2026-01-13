@@ -769,7 +769,70 @@ class AnalyticsEvent(db.Model):
 
     user = db.relationship('User', backref=db.backref('analytics_events', lazy=True))
 
+# ------------------ RECIPES (ADMIN MANAGED) ------------------
 
+class RecipeCategory(db.Model):
+    __tablename__ = 'recipe_categories'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)       # Название: "Завтрак", "Обед"
+    slug = db.Column(db.String(50), unique=True, nullable=False) # "breakfast", "lunch"
+    color_hex = db.Column(db.String(10), default='#FFFFFF') # Цвет карточки: "#FFE2D3"
+    icon_url = db.Column(db.Text, nullable=True)           # Иконка категории
+    sort_order = db.Column(db.Integer, default=0)          # Для сортировки в списке
+
+    # Связь с рецептами
+    recipes = db.relationship('Recipe', backref='category', lazy=True)
+
+    def __repr__(self):
+        return f'<RecipeCategory {self.name}>'
+
+
+class Recipe(db.Model):
+    __tablename__ = 'recipes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    category_id = db.Column(db.Integer, db.ForeignKey('recipe_categories.id', ondelete='SET NULL'), nullable=True)
+
+    # Основная информация
+    title = db.Column(db.String(255), nullable=False)
+    image_url = db.Column(db.Text, nullable=True)          # Ссылка на фото
+
+    # КБЖУ
+    calories = db.Column(db.Integer, nullable=False)
+    protein = db.Column(db.Float, default=0.0)
+    fat = db.Column(db.Float, default=0.0)
+    carbs = db.Column(db.Float, default=0.0)
+
+    # Детали
+    prep_time_minutes = db.Column(db.Integer, nullable=True)
+
+    # Структурированные данные (JSON)
+    # Пример: [{"name": "Овсянка", "amount": "50 г"}, ...]
+    ingredients = db.Column(db.JSON, default=list, nullable=True)
+
+    # Пример: [{"step": 1, "text": "Залить водой", "image_url": "..."}]
+    instructions = db.Column(db.JSON, default=list, nullable=True)
+
+    is_active = db.Column(db.Boolean, default=True, server_default=expression.true())
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "category_name": self.category.name if self.category else None,
+            "category_color": self.category.color_hex if self.category else "#FFFFFF",
+            "title": self.title,
+            "image_url": self.image_url,
+            "calories": self.calories,
+            "protein": self.protein,
+            "fat": self.fat,
+            "carbs": self.carbs,
+            "prep_time_minutes": self.prep_time_minutes,
+            "ingredients": self.ingredients or [],
+            "instructions": self.instructions or []
+        }
+    
 @event.listens_for(User, "after_insert")
 def create_default_settings(mapper, connection, target):
     """
