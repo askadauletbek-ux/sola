@@ -1285,6 +1285,7 @@ def app_profile_data():
     fat_loss_progress_data = None
     progress_checkpoints = []
     latest_analysis_data = None
+    weight_progress = None
 
     # Рассчитываем статус за последние 30 дней для календаря
     today = date.today()
@@ -1548,7 +1549,6 @@ def app_profile_data():
                 })
 
         # Расчет прогресса веса (линейный от точки А до точки Б)
-        weight_progress = None
         if user.initial_body_analysis_id and user.weight_goal and latest_analysis:
             initial_record = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
             if initial_record:
