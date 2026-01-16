@@ -13,7 +13,7 @@ from extensions import db
 from models import BodyVisualization, UploadedFile
 
 # Убедитесь, что эта модель доступна в вашем регионе/аккаунте
-MODEL_NAME = "gemini-2.5-flash-image-preview"
+MODEL_NAME = "gemini-2.5-flash-image"
 
 def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, scene_id: str) -> str:
     """
