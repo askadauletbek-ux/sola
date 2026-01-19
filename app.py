@@ -1920,7 +1920,10 @@ def api_me():
             "is_trainer": bool(getattr(u, 'is_trainer', False)),
             'onboarding_complete': bool(getattr(u, 'onboarding_complete', False)),
             'onboarding_v2_complete': bool(getattr(u, 'onboarding_v2_complete', False)),
-            'squad_status': getattr(u, 'squad_status', 'none')
+            'squad_status': getattr(u, 'squad_status', 'none'),
+            "current_streak": getattr(u, "current_streak", 0),
+            "streak_nutrition": getattr(u, "streak_nutrition", 0),
+            "streak_activity": getattr(u, "streak_activity", 0),
         }
     })
 
