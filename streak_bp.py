@@ -14,60 +14,82 @@ streak_bp = Blueprint('streak_bp', __name__)
 
 # --- ЧЕСТНЫЙ ПЕРЕСЧЕТ СТРИКА ---
 
-def recalculate_streak(user):
-    """
-    Смотрит в таблицу MealLog, ищет непрерывную последовательность дней.
-    Не использует счетчик +1. Считает реальные даты.
-    """
-    # 1. Достаем уникальные даты, когда пользователь ел, в обратном порядке
-    # (DISTINCT date ORDER BY date DESC)
-    logs = db.session.query(MealLog.date) \
-        .filter_by(user_id=user.id) \
-        .group_by(MealLog.date) \
-        .order_by(MealLog.date.desc()) \
-        .limit(365) \
-        .all()
+from models import Activity  # Не забудьте добавить импорт Activity
 
-    # Превращаем в список объектов date: [2023-10-25, 2023-10-24, 2023-10-22...]
-    dates = [row.date for row in logs]
 
-    if not dates:
-        user.current_streak = 0
-        return
+def _calculate_consecutive_days(dates_list):
+    """Вспомогательная функция: считает подряд идущие даты"""
+    if not dates_list:
+        return 0
 
     today = date.today()
     yesterday = today - timedelta(days=1)
 
+    # Сортируем на всякий случай (но база должна выдавать сортированно)
+    dates_list = sorted(list(set(dates_list)), reverse=True)
+
+    latest_date = dates_list[0]
+
+    # Если последняя активность была позавчера или раньше — стрик сгорел
+    if latest_date < yesterday:
+        return 0
+
     streak = 0
+    # Если последняя запись сегодня — начинаем проверку с сегодня
+    # Если последняя запись вчера — начинаем проверку со вчера (стрик еще жив)
+    check_date = today if (latest_date == today) else yesterday
 
-    # Логика: Стрик жив, если последняя запись была Сегодня или Вчера.
-    # Если последняя запись была позавчера - стрик уже 0 (сгорел).
-
-    latest_log = dates[0]
-
-    if latest_log < yesterday:
-        # Стрик прервался
-        user.current_streak = 0
-        return
-
-    # Начинаем проверку цепочки
-    # Если есть запись за сегодня, начинаем отсчет с сегодня.
-    # Если нет за сегодня, но есть за вчера - начинаем со вчера.
-
-    check_date = today if (latest_log == today) else yesterday
-
-    # Проходим по датам и смотрим, нет ли разрывов
-    for d in dates:
+    for d in dates_list:
         if d == check_date:
             streak += 1
-            check_date -= timedelta(days=1)  # Идем на день назад
+            check_date -= timedelta(days=1)
+        elif d > check_date:
+            # Дубликат или дата из будущего (игнорируем)
+            continue
         else:
-            # Нашли разрыв (например, в базе 20-е число, а мы ждали 21-е)
+            # Разрыв цепочки
             break
+    return streak
 
-    user.current_streak = streak
-    # db.session.commit() — делает вызывающая функция
 
+def recalculate_streak(user):
+    """
+    Рассчитывает 3 вида стриков:
+    1. Nutrition: >= 3 приемов пищи
+    2. Activity: Шаги >= Цели
+    3. Total: И то, и другое
+    """
+    # --- 1. Питание (Даты, где >= 3 записей) ---
+    # Группируем по дате, считаем count.
+    # В SQLAlchemy func.count()
+    meal_rows = db.session.query(MealLog.date) \
+        .filter_by(user_id=user.id) \
+        .group_by(MealLog.date) \
+        .having(func.count(MealLog.id) >= 3) \
+        .order_by(MealLog.date.desc()) \
+        .all()
+
+    meal_dates = {row.date for row in meal_rows}  # Set для быстрого поиска
+
+    # --- 2. Активность (Даты, где steps >= step_goal) ---
+    goal = getattr(user, 'step_goal', 10000) or 10000
+
+    activity_rows = db.session.query(Activity.date) \
+        .filter(Activity.user_id == user.id, Activity.steps >= goal) \
+        .order_by(Activity.date.desc()) \
+        .all()
+
+    activity_dates = {row.date for row in activity_rows}
+
+    # --- 3. Общий (Пересечение дат) ---
+    total_dates = meal_dates.intersection(activity_dates)
+
+    # --- Расчет ---
+    user.streak_nutrition = _calculate_consecutive_days(list(meal_dates))
+    user.streak_activity = _calculate_consecutive_days(list(activity_dates))
+
+    # Главный стрик (current_streak) теперь равен общему
+    user.current_streak = _calculate_consecutive_days(list(total_dates))
 
 # --- УВЕДОМЛЕНИЯ О РИСКЕ ПОТЕРИ ---
 

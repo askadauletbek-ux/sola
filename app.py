@@ -770,8 +770,8 @@ def _auto_migrate_diet_schema():
     _ensure_column("user", "sex", "TEXT DEFAULT 'male'")
     _ensure_column("user", "face_consent", "BOOLEAN DEFAULT FALSE")
 
-    # === ВАЖНО: meal_logs нужные поля ===
-    _ensure_column("meal_logs", "image_path", "TEXT")
+    _ensure_column("user", "streak_nutrition", "INTEGER DEFAULT 0")
+    _ensure_column("user", "streak_activity", "INTEGER DEFAULT 0")
     _ensure_column("meal_logs", "is_flagged", "BOOLEAN DEFAULT FALSE")
     _ensure_column("meal_logs", "created_at", "TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP)")
 
@@ -1376,7 +1376,9 @@ def app_profile_data():
         "has_subscription": bool(getattr(user, 'has_subscription', False)),
         "is_trainer": bool(getattr(user, 'is_trainer', False)),
         "avatar_filename": user.avatar.filename if user.avatar else None,
-        "current_streak": getattr(user, "current_streak", 0),
+        "current_streak": getattr(user, "current_streak", 0),  # Это ОБЩИЙ стрик
+        "streak_nutrition": getattr(user, "streak_nutrition", 0),
+        "streak_activity": getattr(user, "streak_activity", 0),
         "calendar_history": calendar_history,  # <--- НОВОЕ ПОЛЕ
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000)

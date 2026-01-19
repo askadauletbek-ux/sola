@@ -63,6 +63,8 @@ class User(db.Model):
 
     # Кэш стрика (пересчитывается на основе реальных записей MealLog)
     current_streak = db.Column(db.Integer, default=0, server_default='0', nullable=False)
+    streak_nutrition = db.Column(db.Integer, default=0, server_default='0', nullable=False)
+    streak_activity = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     # отношения
     subscription = db.relationship(
         'Subscription',
