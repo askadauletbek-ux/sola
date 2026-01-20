@@ -1369,6 +1369,11 @@ def app_profile_data():
     # Мы используем .get(), чтобы не было ошибок, если в базе null
     show_popup = bool(getattr(user, 'show_welcome_popup', False))
 
+    # Получаем статус последней заявки на доставку (если есть)
+    latest_app = SubscriptionApplication.query.filter_by(user_id=user.id).order_by(
+        SubscriptionApplication.created_at.desc()).first()
+    delivery_status = latest_app.status if latest_app else None
+
     user_data = {
         "id": user.id,
         "name": user.name,
@@ -1381,7 +1386,9 @@ def app_profile_data():
         "streak_activity": getattr(user, "streak_activity", 0),
         "calendar_history": calendar_history,  # <--- НОВОЕ ПОЛЕ
         "show_welcome_popup": show_popup,
-        "step_goal": getattr(user, "step_goal", 10000)
+        "step_goal": getattr(user, "step_goal", 10000),
+        "delivery_status": delivery_status
+        # <--- ДОБАВЛЕНО: статус доставки (pending, warehouse, in_transit, delivered)
     }
 
     # --- 3. Данные о диете ---
@@ -4249,20 +4256,38 @@ def admin_applications_list():
 @app.route("/admin/applications/<int:app_id>/status", methods=["POST"])
 @admin_required
 def admin_update_application_status(app_id):
-    """Обновляет статус заявки (pending/processed)."""
+    """Обновляет статус заявки."""
     app_obj = db.session.get(SubscriptionApplication, app_id)
     if not app_obj:
         flash("Заявка не найдена", "error")
         return redirect(url_for("admin_applications_list"))
 
     new_status = request.form.get("status")
-    if new_status in ('pending', 'processed'):
+    # Добавлены новые статусы для логистики
+    allowed_statuses = ('pending', 'processed', 'warehouse', 'in_transit', 'delivered')
+
+    if new_status in allowed_statuses:
         try:
             old_status = app_obj.status
             app_obj.status = new_status
             db.session.commit()
             log_audit("app_status_change", "SubscriptionApplication", app_obj.id,
                       old={"status": old_status}, new={"status": new_status})
+
+            # Опционально: отправить PUSH уведомление при смене статуса
+            if new_status == 'warehouse':
+                msg = "Ваш набор Sola собирается на складе 📦"
+            elif new_status == 'in_transit':
+                msg = "Ваш набор Sola уже в пути! 🚚"
+            elif new_status == 'delivered':
+                msg = "Ваш набор доставлен! 🎉"
+            else:
+                msg = None
+
+            if msg:
+                from notification_service import send_user_notification
+                send_user_notification(user_id=app_obj.user_id, title="Статус доставки", body=msg, type="info")
+
             flash("Статус заявки обновлен.", "success")
         except Exception as e:
             db.session.rollback()
@@ -4271,7 +4296,6 @@ def admin_update_application_status(app_id):
         flash("Некорректный статус.", "error")
 
     return redirect(url_for("admin_applications_list"))
-
 
 # =======================================
 @app.route("/admin/user/create", methods=["GET", "POST"])
