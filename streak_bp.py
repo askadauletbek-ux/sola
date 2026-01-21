@@ -55,17 +55,22 @@ def _calculate_consecutive_days(dates_list):
 def recalculate_streak(user):
     """
     Рассчитывает 3 вида стриков:
-    1. Nutrition: >= 3 приемов пищи
+    1. Nutrition: Дефицит калорий (Съедено <= Цель)
     2. Activity: Шаги >= Цели
     3. Total: И то, и другое
     """
-    # --- 1. Питание (Даты, где >= 3 записей) ---
-    # Группируем по дате, считаем count.
-    # В SQLAlchemy func.count()
+    # --- 1. Питание (Даты, где соблюден дефицит) ---
+    # Получаем цель пользователя (если не задана, берем дефолт 2000)
+    daily_limit = getattr(user, 'daily_calories', 2000) or 2000
+
+    # Группируем по дате, суммируем калории.
+    # Условие: Сумма калорий > 0 (что-то ел) И Сумма калорий <= Лимита (дефицит)
+    # Если переел (профицит), день не попадет в выборку, и стрик прервется.
     meal_rows = db.session.query(MealLog.date) \
         .filter_by(user_id=user.id) \
         .group_by(MealLog.date) \
-        .having(func.count(MealLog.id) >= 3) \
+        .having(func.sum(MealLog.calories) > 0) \
+        .having(func.sum(MealLog.calories) <= daily_limit) \
         .order_by(MealLog.date.desc()) \
         .all()
 
@@ -82,6 +87,7 @@ def recalculate_streak(user):
     activity_dates = {row.date for row in activity_rows}
 
     # --- 3. Общий (Пересечение дат) ---
+    # Общий стрик будет только в те дни, когда был И дефицит, И активность
     total_dates = meal_dates.intersection(activity_dates)
 
     # --- Расчет ---
