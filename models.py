@@ -29,6 +29,7 @@ class User(db.Model):
 
     # Цели
     weight_goal = db.Column(db.Float, nullable=True)  # Точка Б (целевой вес)
+    start_weight = db.Column(db.Float, nullable=True)  # Точка А (вес на старте)
     fat_mass_goal = db.Column(db.Float, nullable=True)
     muscle_mass_goal = db.Column(db.Float, nullable=True)
     # Новое поле:
@@ -834,7 +835,20 @@ class Recipe(db.Model):
             "ingredients": self.ingredients or [],
             "instructions": self.instructions or []
         }
-    
+
+
+class WeightLog(db.Model):
+    __tablename__ = 'weight_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    weight = db.Column(db.Float, nullable=False)
+    date = db.Column(db.Date, default=date.today, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('weight_logs', lazy='dynamic', cascade='all, delete-orphan'))
+
+
 @event.listens_for(User, "after_insert")
 def create_default_settings(mapper, connection, target):
     """

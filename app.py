@@ -101,8 +101,7 @@ from models import (
     User, Subscription, Order, Group, GroupMember, GroupMessage, MessageReaction,
     GroupTask, MealLog, Activity, Diet, Training, TrainingSignup, BodyAnalysis,
     UserSettings, MealReminderLog, AuditLog, PromptTemplate, UploadedFile,
-    UserAchievement, MessageReport, AnalyticsEvent, RecipeCategory, Recipe)
-
+    UserAchievement, MessageReport, AnalyticsEvent, RecipeCategory, Recipe, WeightLog)
 # <-- Добавьте это ниже импортов models
 from achievements_engine import check_all_achievements, ACHIEVEMENTS_METADATA
 
@@ -763,8 +762,11 @@ def _ensure_column(table, column, ddl):
 
 def _auto_migrate_diet_schema():
     insp = inspect(db.engine)
-    # Создадим недостающие таблицы по моделям
+    # Создадим недостающие таблицы по моделям (включая WeightLog)
     db.create_all()
+
+    # === Новое поле для фиксации веса ===
+    _ensure_column("user", "start_weight", "FLOAT")
 
     # === Новые поля пользователя для визуализаций ===
     _ensure_column("user", "sex", "TEXT DEFAULT 'male'")
@@ -7584,25 +7586,42 @@ def get_weekly_stories(group_id):
 @login_required
 def api_set_weight_goal():
     """
-    Устанавливает целевой вес пользователя.
-    Принимает JSON: {"target_weight": 75.5}
+    Устанавливает целевой вес пользователя и фиксирует Точку А (текущий вес).
     """
     user = get_current_user()
     data = request.get_json(force=True, silent=True) or {}
 
     try:
         new_goal = float(data.get('target_weight', 0))
-        if new_goal <= 0 or new_goal > 300:  # Разумные пределы
+        if new_goal <= 0 or new_goal > 300:
             return jsonify({"ok": False, "error": "Некорректный вес"}), 400
 
-        # --- ОБНОВЛЕНИЕ ТОЧКИ А ---
-        # Находим последний замер и делаем его стартовым для новой цели
-        last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
-        if last_analysis:
-            user.initial_body_analysis_id = last_analysis.id
-        # ---------------------------
+        # 1. Определяем текущий вес для фиксации Точки А
+        current_weight = 0.0
+        # Сначала ищем в логах веса
+        last_log = WeightLog.query.filter_by(user_id=user.id).order_by(WeightLog.date.desc(),
+                                                                       WeightLog.created_at.desc()).first()
 
+        if last_log:
+            current_weight = last_log.weight
+        else:
+            # Fallback: ищем в BodyAnalysis, если логов нет
+            last_ana = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+            if last_ana and last_ana.weight:
+                current_weight = last_ana.weight
+            else:
+                # Если совсем ничего нет, считаем целью текущий (фиктивно, чтобы не ломать логику)
+                current_weight = new_goal
+
+        # 2. Фиксируем Точку А и Точку Б
+        user.start_weight = current_weight
         user.weight_goal = new_goal
+
+        # 3. Создаем запись в WeightLog на сегодня, если её нет (чтобы график начинался красиво)
+        today = date.today()
+        if not WeightLog.query.filter_by(user_id=user.id, date=today).first():
+            db.session.add(WeightLog(user_id=user.id, weight=current_weight, date=today))
+
         db.session.commit()
 
         # Аналитика
@@ -7611,7 +7630,7 @@ def api_set_weight_goal():
             amplitude.track(BaseEvent(
                 event_type="Weight Goal Updated",
                 user_id=str(user.id),
-                event_properties={"new_goal": new_goal}
+                event_properties={"new_goal": new_goal, "start_point": current_weight}
             ))
         except:
             pass
@@ -7629,66 +7648,50 @@ def api_set_weight_goal():
 @login_required
 def api_get_weight_progress():
     """
-    Возвращает рассчитанный прогресс по весу для виджета во Flutter.
-    Логика идентична той, что мы обсуждали для веб-профиля.
+    Возвращает прогресс по весу на основе WeightLog и User.start_weight.
+    Без сложного прогнозирования дефицита (только факты).
     """
     user = get_current_user()
 
-    # 1. Проверяем наличие всех данных
-    latest_analysis = user.latest_analysis  # Используем property из модели
-    initial_analysis = db.session.get(BodyAnalysis,
-                                      user.initial_body_analysis_id) if user.initial_body_analysis_id else None
-
-    if not (initial_analysis and latest_analysis and latest_analysis.weight and user.weight_goal):
-        return jsonify({
-            "ok": True,
-            "has_data": False,
-            "message": "Необходимо сделать первый замер и установить цель."
-        })
+    # 1. Проверяем наличие целей (Точка А и Точка Б)
+    if user.start_weight is None or user.weight_goal is None:
+        # Попытка миграции старых данных "на лету"
+        if user.initial_body_analysis_id:
+            init_a = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
+            if init_a and init_a.weight:
+                user.start_weight = init_a.weight
+                db.session.commit()
+            else:
+                return jsonify({"ok": True, "has_data": False, "message": "Цель не установлена"})
+        else:
+            return jsonify({"ok": True, "has_data": False, "message": "Цель не установлена"})
 
     try:
-        # 2. Базовые цифры
-        initial_weight = float(initial_analysis.weight)
-        last_measured_weight = float(latest_analysis.weight)
-        goal_weight = float(user.weight_goal)
+        # 2. Получаем текущий вес (последняя запись в логе)
+        last_log = WeightLog.query.filter_by(user_id=user.id).order_by(WeightLog.date.desc(),
+                                                                       WeightLog.created_at.desc()).first()
 
-        # 3. Расчет "умного" текущего веса (Прогноз на основе дефицита калорий после замера)
-        # Если не хотите усложнять, можно просто использовать last_measured_weight
+        current_weight = 0.0
+        if last_log:
+            current_weight = last_log.weight
+        else:
+            # Fallback на BodyAnalysis, если логов нет
+            last_ana = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+            if last_ana:
+                current_weight = last_ana.weight
+            else:
+                current_weight = user.start_weight
 
-        start_datetime = latest_analysis.timestamp
-        # --- БЛОК ПРОГНОЗА (Упрощенный для API) ---
-        # Считаем калории, съеденные ПОСЛЕ последнего замера
-        total_consumed = db.session.query(func.sum(MealLog.calories)).filter(
-            MealLog.user_id == user.id,
-            MealLog.created_at >= start_datetime
-        ).scalar() or 0
+        # 3. Расчет прогресса (Линейный)
+        start = user.start_weight
+        goal = user.weight_goal
+        current = current_weight
 
-        # Считаем активность ПОСЛЕ последнего замера (условно считаем по дням)
-        total_active_burn = db.session.query(func.sum(Activity.active_kcal)).filter(
-            Activity.user_id == user.id,
-            Activity.date >= start_datetime.date()
-        ).scalar() or 0
-
-        # Метаболизм за прошедшие дни (включая сегодня)
-        days_passed = (datetime.utcnow() - start_datetime).days
-        total_metabolism = (latest_analysis.metabolism or 1500) * (days_passed + 0.5)  # +0.5 за текущий день
-
-        # Дефицит
-        total_deficit = (total_metabolism + total_active_burn) - total_consumed
-
-        # 7700 ккал = 1 кг веса
-        estimated_lost_kg = total_deficit / 7700
-
-        # Текущий вес (прогноз)
-        current_weight = last_measured_weight - estimated_lost_kg
-        # ------------------------------------------
-
-        # 4. Расчет прогресса
-        total_diff = initial_weight - goal_weight  # Сколько всего надо скинуть/набрать
-        diff_done = initial_weight - current_weight  # Сколько уже прошли
+        total_diff = start - goal
+        diff_done = start - current
 
         percentage = 0.0
-        if abs(total_diff) > 0.1:  # Защита от деления на ноль
+        if abs(total_diff) > 0.1:
             percentage = (diff_done / total_diff) * 100
 
         percentage = min(100.0, max(0.0, percentage))
@@ -7697,13 +7700,13 @@ def api_get_weight_progress():
             "ok": True,
             "has_data": True,
             "data": {
-                "percentage": round(percentage, 1),  # 0..100
-                "current_kg": round(current_weight, 1),  # Текущий вес (расчетный)
-                "initial_kg": round(initial_weight, 1),  # Старт
-                "goal_kg": round(goal_weight, 1),  # Цель
-                "total_change_needed": round(total_diff, 1),  # Всего сбросить
-                "already_changed": round(diff_done, 1),  # Уже сброшено
-                "remaining": round(current_weight - goal_weight, 1)  # Осталось
+                "percentage": round(percentage, 1),
+                "current_kg": round(current, 1),
+                "initial_kg": round(start, 1),  # В JSON поле называется initial_kg для совместимости с фронтом
+                "goal_kg": round(goal, 1),
+                "total_change_needed": round(total_diff, 1),
+                "already_changed": round(diff_done, 1),
+                "remaining": round(current - goal, 1)
             }
         })
 
