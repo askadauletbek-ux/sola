@@ -24,6 +24,12 @@ def get_deficit_history():
     history = []
     today = datetime.now().date()
 
+    # Пытаемся получить рост пользователя для расчета ИМТ
+    # Проверяем разные варианты хранения (атрибут или в профиле)
+    user_height = getattr(user, 'height', None)
+    if not user_height and hasattr(user, 'profile') and user.profile:
+        user_height = user.profile.get('height')
+
     # Берем данные за последние 30 дней
     for i in range(30):
         current_date = today - timedelta(days=i)
@@ -36,44 +42,57 @@ def get_deficit_history():
         consumed = sum(l.calories for l in logs)
 
         # 2. Считаем сожженное (Activity + BMR)
-        # Упрощенно берем BMR из профиля или дефолт 1600, плюс активность
-        bmr = user.profile.get('metabolism', 1600) if user.profile else 1600
+        bmr = user.profile.get('metabolism', 1600) if (hasattr(user, 'profile') and user.profile) else 1600
 
         activities = Activity.query.filter(
             Activity.user_id == user.id,
             func.date(Activity.created_at) == current_date
         ).all()
         active_burned = sum(a.burned_kcal for a in activities)
-        total_burned = int(bmr + active_burned)  # BMR считается за сутки
+        total_burned = int(bmr + active_burned)
 
         # 3. Ищем ЗАМЕР ВЕСА за этот день (BodyAnalysis)
-        # Важно: приводим created_at к дате для сравнения
         analysis = BodyAnalysis.query.filter(
             BodyAnalysis.user_id == user.id,
             func.date(BodyAnalysis.created_at) == current_date
         ).order_by(BodyAnalysis.created_at.desc()).first()
 
-        # Формируем объект
+        # Получаем вес и ИМТ
+        weight_val = None
+        bmi_val = None
+        fat_val = None
+
+        if analysis:
+            # ИСПРАВЛЕНИЕ 1: Используем правильное имя поля .weight
+            weight_val = getattr(analysis, 'weight', None)
+            fat_val = getattr(analysis, 'fat_mass', None)
+
+            # ИСПРАВЛЕНИЕ 2: Пытаемся взять bmi из базы, если нет — считаем сами
+            bmi_val = getattr(analysis, 'bmi', None)
+
+            if not bmi_val and weight_val and user_height:
+                try:
+                    h_m = user_height / 100.0
+                    bmi_val = round(weight_val / (h_m * h_m), 1)
+                except:
+                    bmi_val = None
+
         day_data = {
             "date": current_date.strftime("%d.%m.%Y"),
             "consumed": int(consumed),
             "total_burned": int(total_burned),
             "deficit": int(total_burned - consumed),
 
-            # ДАННЫЕ ЗАМЕРА (если есть)
             "is_measurement_day": True if analysis else False,
-            "weight": analysis.weight_kg if analysis else None,
-            "bmi": analysis.bmi if analysis else None,
-            "fat_mass": analysis.fat_mass if analysis else None,
+            "weight": weight_val,
+            "bmi": bmi_val,
+            "fat_mass": fat_val,
         }
 
-        # Добавляем в список (если день не пустой или это сегодня/вчера)
-        # Можно фильтровать пустые дни, чтобы не забивать список
         if consumed > 0 or analysis or i < 3:
             history.append(day_data)
 
     return jsonify(history)
-
 
 # --- УВЕДОМЛЕНИЯ ---
 
