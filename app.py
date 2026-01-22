@@ -2949,6 +2949,7 @@ from flask import jsonify # Убедись, что jsonify импортиров�
 @login_required
 def confirm_analysis():
     user = get_current_user()
+    previous_analysis = None
 
     # --- ЛОГИКА POST-ЗАПРОСА (Сохранение данных от Flutter) ---
     if request.method == 'POST':
@@ -6767,7 +6768,6 @@ def reset_goals():
 
     user.fat_mass_goal = None
     user.muscle_mass_goal = None
-    user.previous_analysis = None
     user.initial_body_analysis_id = None
 
     db.session.commit()
