@@ -5630,13 +5630,18 @@ def deficit_history():
     user = get_current_user()
     latest_analysis = user.latest_analysis
 
-    if not (latest_analysis and latest_analysis.fat_mass and user.fat_mass_goal):
-        return jsonify({"error": "Недостаточно данных для расчета истории дефицита."}), 404
+    # Определяем точку старта (от Initial, если есть, иначе от Latest)
+    if user.initial_body_analysis_id:
+        start_point = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
+        start_datetime = start_point.timestamp if start_point else datetime.now(UTC)
+    elif latest_analysis:
+        start_datetime = latest_analysis.timestamp
+    else:
+        return jsonify({"error": "Нет данных замеров"}), 404
 
-    start_datetime = latest_analysis.timestamp
     today = date.today()
 
-    # Запрашиваем все нужные данные за период одним разом
+    # Запрашиваем данные
     meal_logs = MealLog.query.filter(
         MealLog.user_id == user.id,
         MealLog.date >= start_datetime.date()
@@ -5646,17 +5651,14 @@ def deficit_history():
         Activity.date >= start_datetime.date()
     ).all()
 
-    # --- ИЗМЕНЕНИЕ: Получаем замеры и кладем их в словарь по дате ---
+    # Получаем замеры и кладем их в словарь по дате
     body_analyses = BodyAnalysis.query.filter(
         BodyAnalysis.user_id == user.id,
         func.date(BodyAnalysis.timestamp) >= start_datetime.date()
     ).all()
-
-    # Словарь { date: BodyAnalysis_object }
     analysis_map = {b.timestamp.date(): b for b in body_analyses}
-    # ---------------------------------------------------------------
 
-    # Создаем словари для быстрого доступа к логам еды и активности
+    # Словари логов
     meals_map = {}
     for log in meal_logs:
         if log.date not in meals_map:
@@ -5666,7 +5668,9 @@ def deficit_history():
     activity_map = {log.date: log.active_kcal for log in activity_logs}
 
     history_data = []
-    metabolism = latest_analysis.metabolism or 0
+    # Для метаболизма берем актуальное значение (из последнего замера)
+    metabolism = latest_analysis.metabolism if latest_analysis else 1600
+
     delta_days = (today - start_datetime.date()).days
 
     for i in range(delta_days + 1):
@@ -5674,6 +5678,10 @@ def deficit_history():
         consumed = meals_map.get(current_day, 0)
         burned_active = activity_map.get(current_day, 0)
 
+        # В день самого первого замера часто неполные данные по еде до замера,
+        # можно добавить логику "consumed -= calories_before", как у вас было,
+        # но для истории часто проще показывать "как есть".
+        # Оставим вашу логику для точности:
         if i == 0:
             calories_before_analysis = db.session.query(func.sum(MealLog.calories)).filter(
                 MealLog.user_id == user.id,
@@ -5686,7 +5694,6 @@ def deficit_history():
         total_burned = metabolism + burned_active
         daily_deficit = total_burned - consumed
 
-        # --- ИЗМЕНЕНИЕ: Достаем данные замера, если он был ---
         day_analysis = analysis_map.get(current_day)
 
         history_data.append({
@@ -5696,13 +5703,13 @@ def deficit_history():
             "burned_active": burned_active,
             "total_burned": total_burned,
             "deficit": daily_deficit if daily_deficit > 0 else 0,
-
-            # Передаем данные во фронтенд
             "is_measurement_day": day_analysis is not None,
             "weight": day_analysis.weight if day_analysis else None,
             "bmi": day_analysis.bmi if day_analysis else None
         })
-        # -----------------------------------------------------
+
+    # Сортируем: новые сверху (или снизу, как удобно фронту. Обычно history идет сверху вниз от новых)
+    history_data.reverse()
 
     return jsonify(history_data)
 @app.route("/purchase")
