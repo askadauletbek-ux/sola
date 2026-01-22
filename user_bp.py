@@ -1,4 +1,6 @@
 from flask import Blueprint, jsonify, request, session
+from sqlalchemy import func, cast, Date
+from datetime import datetime, timedelta
 from extensions import db
 from models import User, Notification, MealLog, Activity, BodyAnalysis, Diet, Subscription, TrainingSignup
 from notification_service import send_user_notification
@@ -9,6 +11,68 @@ user_bp = Blueprint('user_bp', __name__)
 def _current_user():
     uid = session.get("user_id")
     return db.session.get(User, uid) if uid else None
+
+
+# --- ИСТОРИЯ ДЕФИЦИТА И ЗАМЕРОВ (НОВОЕ) ---
+
+@user_bp.route('/api/history/deficit', methods=['GET'])
+def get_deficit_history():
+    user = _current_user()
+    if not user:
+        return jsonify([]), 401
+
+    history = []
+    today = datetime.now().date()
+
+    # Берем данные за последние 30 дней
+    for i in range(30):
+        current_date = today - timedelta(days=i)
+
+        # 1. Считаем съеденное (MealLog)
+        logs = MealLog.query.filter(
+            MealLog.user_id == user.id,
+            func.date(MealLog.created_at) == current_date
+        ).all()
+        consumed = sum(l.calories for l in logs)
+
+        # 2. Считаем сожженное (Activity + BMR)
+        # Упрощенно берем BMR из профиля или дефолт 1600, плюс активность
+        bmr = user.profile.get('metabolism', 1600) if user.profile else 1600
+
+        activities = Activity.query.filter(
+            Activity.user_id == user.id,
+            func.date(Activity.created_at) == current_date
+        ).all()
+        active_burned = sum(a.burned_kcal for a in activities)
+        total_burned = int(bmr + active_burned)  # BMR считается за сутки
+
+        # 3. Ищем ЗАМЕР ВЕСА за этот день (BodyAnalysis)
+        # Важно: приводим created_at к дате для сравнения
+        analysis = BodyAnalysis.query.filter(
+            BodyAnalysis.user_id == user.id,
+            func.date(BodyAnalysis.created_at) == current_date
+        ).order_by(BodyAnalysis.created_at.desc()).first()
+
+        # Формируем объект
+        day_data = {
+            "date": current_date.strftime("%d.%m.%Y"),
+            "consumed": int(consumed),
+            "total_burned": int(total_burned),
+            "deficit": int(total_burned - consumed),
+
+            # ДАННЫЕ ЗАМЕРА (если есть)
+            "is_measurement_day": True if analysis else False,
+            "weight": analysis.weight_kg if analysis else None,
+            "bmi": analysis.bmi if analysis else None,
+            "fat_mass": analysis.fat_mass if analysis else None,
+        }
+
+        # Добавляем в список (если день не пустой или это сегодня/вчера)
+        # Можно фильтровать пустые дни, чтобы не забивать список
+        if consumed > 0 or analysis or i < 3:
+            history.append(day_data)
+
+    return jsonify(history)
 
 
 # --- УВЕДОМЛЕНИЯ ---
