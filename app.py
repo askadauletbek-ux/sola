@@ -2958,25 +2958,26 @@ def confirm_analysis():
         if not analysis_data:
             return jsonify({"success": False, "error": "Нет данных от приложения"}), 400
 
-        # 2. Получаем предыдущий замер ДО сохранения нового
-        previous_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
-            BodyAnalysis.timestamp.desc()).first()
+            # 2. Получаем предыдущий замер ДО сохранения нового
+            previous_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
+                BodyAnalysis.timestamp.desc()).first()
 
-        # --- ЗАЩИТА: Проверка 7 дней ---
-        if previous_analysis and previous_analysis.timestamp:
-            # Сравниваем даты (без времени), чтобы было честно по календарю, или с временем (как вам удобнее)
-            # Здесь строгая проверка по времени:
+            # --- ЗАЩИТА: Проверка 7 дней ---
+            # Проверяем только если у пользователя УЖЕ есть Точка А (не сброшено).
+            if user.initial_body_analysis_id and previous_analysis and previous_analysis.timestamp:
+                # Сравниваем даты (без времени), чтобы было честно по календарю, или с временем (как вам удобнее)
+                # Здесь строгая проверка по времени:
 
-            # Исправление TypeError: приводим время из БД к UTC, если оно naive
-            prev_ts = previous_analysis.timestamp
-            if prev_ts.tzinfo is None:
-                prev_ts = prev_ts.replace(tzinfo=UTC)
+                # Исправление TypeError: приводим время из БД к UTC, если оно naive
+                prev_ts = previous_analysis.timestamp
+                if prev_ts.tzinfo is None:
+                    prev_ts = prev_ts.replace(tzinfo=UTC)
 
-            diff = datetime.now(UTC) - prev_ts
-            if diff.days < 7:
-                return jsonify(
-                    {"success": False, "error": f"Следующий замер доступен через {7 - diff.days} дн."}), 400
-        # -------------------------------
+                diff = datetime.now(UTC) - prev_ts
+                if diff.days < 7:
+                    return jsonify(
+                        {"success": False, "error": f"Следующий замер доступен через {7 - diff.days} дн."}), 400
+            # -------------------------------
 
         # 3. Создаем и наполняем новую запись анализа
         new_analysis_entry = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
