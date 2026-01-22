@@ -6767,6 +6767,7 @@ def reset_goals():
 
     user.fat_mass_goal = None
     user.muscle_mass_goal = None
+    user.previous_analysis = None
     user.initial_body_analysis_id = None
 
     db.session.commit()
