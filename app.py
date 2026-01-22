@@ -5646,17 +5646,17 @@ def deficit_history():
         Activity.date >= start_datetime.date()
     ).all()
 
-    # --- НАЧАЛО ИЗМЕНЕНИЙ ---
-    # Получаем все замеры тела за этот период
+    # --- ИЗМЕНЕНИЕ: Получаем замеры и кладем их в словарь по дате ---
     body_analyses = BodyAnalysis.query.filter(
         BodyAnalysis.user_id == user.id,
         func.date(BodyAnalysis.timestamp) >= start_datetime.date()
     ).all()
-    # Создаем set для быстрой проверки дат
-    measurement_dates = {b.timestamp.date() for b in body_analyses}
-    # --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
-    # Создаем словари для быстрого доступа
+    # Словарь { date: BodyAnalysis_object }
+    analysis_map = {b.timestamp.date(): b for b in body_analyses}
+    # ---------------------------------------------------------------
+
+    # Создаем словари для быстрого доступа к логам еды и активности
     meals_map = {}
     for log in meal_logs:
         if log.date not in meals_map:
@@ -5686,6 +5686,9 @@ def deficit_history():
         total_burned = metabolism + burned_active
         daily_deficit = total_burned - consumed
 
+        # --- ИЗМЕНЕНИЕ: Достаем данные замера, если он был ---
+        day_analysis = analysis_map.get(current_day)
+
         history_data.append({
             "date": current_day.strftime('%d.%m.%Y'),
             "consumed": consumed,
@@ -5693,11 +5696,15 @@ def deficit_history():
             "burned_active": burned_active,
             "total_burned": total_burned,
             "deficit": daily_deficit if daily_deficit > 0 else 0,
-            "is_measurement_day": current_day in measurement_dates  # <-- НОВЫЙ ФЛАГ
+
+            # Передаем данные во фронтенд
+            "is_measurement_day": day_analysis is not None,
+            "weight": day_analysis.weight if day_analysis else None,
+            "bmi": day_analysis.bmi if day_analysis else None
         })
+        # -----------------------------------------------------
 
     return jsonify(history_data)
-
 @app.route("/purchase")
 def purchase_page():
     user_id = session.get('user_id')
