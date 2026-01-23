@@ -12,60 +12,41 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Убедитесь, что эта модель доступна в вашем регионе/аккаунте
-MODEL_NAME = "gemini-2.5-flash-image"
+# Убедитесь, что эта модель доступна (например, gemini-1.5-flash или gemini-2.0-flash-exp)
+# Если 2.5 недоступна, используйте "gemini-1.5-flash"
+MODEL_NAME = "gemini-2.0-flash-exp"
 
-def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, scene_id: str) -> str:
+def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> str:
     """
-    Финальная версия промпта, использующая унифицированные ключи height и weight.
+    Промпт сфокусирован на сохранении исходного изображения (фон, одежда, поза)
+    и изменении только морфологии тела под заданные метрики.
     """
-    # Теперь используем ключи 'height' и 'weight', как в основной модели BodyAnalysis
     height = metrics.get("height")
     weight = metrics.get("weight")
     fat_pct = metrics.get("fat_pct")
     muscle_pct = metrics.get("muscle_pct")
 
-    if sex == 'female':
-        clothing_description = "Plain black sports bra (top) and plain black athletic shorts. Simple, functional, no logos, no embellishments. Matte fabric."
-    else:  # male
-        clothing_description = "Plain black athletic shorts, bare torso. Simple, functional, no logos, no embellishments. Matte fabric."
-
-    photo_style = "Hyper-realistic, clinical, high-fidelity studio photograph. Captured with a professional medium-format camera (e.g., Hasselblad H6D-100c) and a prime 120mm macro lens set to f/11 for maximum depth of field and sharpness across the entire body. RAW photo, unedited, unprocessed."
-
+    # Формируем описание задачи для модели
+    # Мы убрали жесткое описание одежды и фона, заменив его на инструкции по сохранению.
     return f"""
-# PRIMARY OBJECTIVE: ABSOLUTE PHOTOREALISM & SCIENTIFIC DATA ACCURACY
-The output MUST be a physically accurate, hyper-realistic photographic representation of the human body strictly based on the provided metrics. 
+# SYSTEM ROLE: EXPERT ANATOMICAL PHOTO EDITOR
+Your task is to realistically modify the physique of the person in the provided input image to match specific biometric data, while STRICTLY PRESERVING the original context.
 
-# SCENE SETUP
-- **Scene ID:** {scene_id}
-- **Style:** {photo_style}
-- **Background:** Pure white (#FFFFFF) seamless studio cyclorama.
-- **Camera:** Static, eye-level, full-height shot. 120mm focal length.
-- **Lighting:** Ultra-flat, high-key diffused studio lighting. No shadows.
+# PRESERVATION DIRECTIVES (DO NOT CHANGE)
+1. **Background & Lighting:** Keep the background, shadows, and lighting EXACTLY as they are in the source image. DO NOT replace with a white studio background.
+2. **Clothing:** Preserve the original clothing style, color, and texture. Only adjust the fit/drape of the fabric to realistically match the new body shape (e.g., tighter on muscles, looser if weight drops).
+3. **Face & Identity:** The face must remain UNCHANGED.
+4. **Pose:** Maintain the exact original pose.
 
-# COMPOSITION
-- **Visibility:** The ENTIRE subject (head to feet) MUST be fully visible.
-- **Margins:** 5-10% white margin above head and below feet.
-- **NO CROPPING:** Do not crop hair, fingers, or toes.
+# TARGET BODY CONFIGURATION ({variant_label.upper()})
+- **Sex:** {sex}
+- **Height:** {height} cm
+- **Weight:** {weight} kg
+- **Body Fat:** {fat_pct}% (Visual cue: {"Visible abs, vascularity, tight skin" if fat_pct < 15 else "Softer definition, smooth contours"}).
+- **Muscle Mass:** {muscle_pct}% (Visual cue: {"Hypertrophy, dense muscle volume" if muscle_pct > 40 else "Average athletic tone"}).
 
-# SUBJECT & IDENTITY
-- **Pose:** Strict anatomical A-pose.
-- **Identity:** The face MUST be an EXACT, UNALTERED match to the provided avatar image.
-- **Clothing:** {clothing_description}
-
-# BODY SPECIFICATION FOR "{variant_label}"
-- **sex:** {sex}
-- **height_cm:** {height}
-- **weight_kg:** {weight}
-- **fat_percent:** {fat_pct}% (LITERAL translation to subcutaneous fat. High = softer contours, Low = tight skin).
-- **muscle_percent:** {muscle_pct}% (LITERAL translation to muscle volume and definition).
-
-# REALISM DIRECTIVES
-- **Skin Texture:** Microscopic detail: pores, natural variations, no airbrushing.
-- **Gravity:** Realistic effects on soft tissues (fat) and muscles.
-- **Proportions:** Anthropometrically correct for the specified height and sex.
-
-The final output must be an authentic, unedited, high-resolution photograph.
+# EXECUTION
+Generate a photorealistic result that looks like the original photo was taken of the subject with this exact new body composition. No CGI artifacts.
 """.strip()
 
 def _extract_first_image_bytes(response) -> bytes:
@@ -99,7 +80,7 @@ def _compute_pct(value: float, weight: float) -> float:
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> Tuple[str, str]:
     """
-    Генерирует изображения До и После, нормализуя входные данные для промпта.
+    Генерирует изображения До и После, используя загруженное фото (avatar_bytes) как референс.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -107,18 +88,14 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
 
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
-    scene_id = f"scene-{uuid.uuid4().hex}"
 
     # 1. Подготовка ТЕКУЩИХ метрик (Точка А)
-    # Приводим к ключам, которые ожидает _build_prompt
     curr_weight = metrics_current.get("weight", 0)
     metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
-    # Если мышечная масса не передана, берем среднее (например, 40% от веса)
     curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
     metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
 
     # 2. Подготовка ЦЕЛЕВЫХ метрик (Точка Б)
-    # В metrics_target от бэкенда приходят ключи weight_kg и height_cm
     tgt_weight = metrics_target.get("weight_kg", 0)
     tgt_data_for_prompt = {
         "height": metrics_target.get("height_cm"),
@@ -127,22 +104,39 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
         "muscle_pct": metrics_target.get("muscle_pct")
     }
 
-    # Генерация текущего состояния
-    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", scene_id)
+    # Генерация текущего состояния (реконструкция с уточненными цифрами)
+    # Мы передаем avatar_bytes и просим применить текущие метрики (это может немного "подтянуть" фото под цифры)
+    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current")
     contents_curr = [
         types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
         types.Part(text=prompt_curr),
     ]
-    resp_curr = client.models.generate_content(model=MODEL_NAME, contents=contents_curr)
+    # Используем config для контроля качества (если требуется)
+    generate_config = types.GenerateContentConfig(
+        temperature=0.4, # Понижаем температуру для большей точности следования референсу
+        top_p=0.95,
+        top_k=40,
+        candidate_count=1
+    )
+
+    resp_curr = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_curr,
+        config=generate_config
+    )
     curr_png = _extract_first_image_bytes(resp_curr)
 
     # Генерация целевого состояния
-    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target", scene_id)
+    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target")
     contents_tgt = [
-        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
+        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)), # Используем оригинал как исходник
         types.Part(text=prompt_tgt),
     ]
-    resp_tgt = client.models.generate_content(model=MODEL_NAME, contents=contents_tgt)
+    resp_tgt = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_tgt,
+        config=generate_config
+    )
     tgt_png = _extract_first_image_bytes(resp_tgt)
 
     # Сохранение в БД
