@@ -6740,6 +6740,9 @@ app.register_blueprint(streak_bp)    # <--- Добавлено
 from user_bp import user_bp # <--- ИМПОРТ НОВОГО BP
 app.register_blueprint(user_bp) # <--- РЕГИСТРАЦИЯ
 
+from support_bp import support_bp
+app.register_blueprint(support_bp, url_prefix='/api/support')
+
 @app.route('/files/<path:filename>')
 def serve_file(filename):
     """Отдаёт загруженный файл из БД."""
