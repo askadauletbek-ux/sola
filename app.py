@@ -58,7 +58,7 @@ from shopping_bp import shopping_bp
 from user_bp import user_bp
 # Добавляем этот импорт, чтобы отправка работала в админке
 from notification_service import send_user_notification
-from models import BodyVisualization, SubscriptionApplication, EmailVerification, SquadScoreLog
+from models import BodyVisualization, SubscriptionApplication, EmailVerification, SquadScoreLog, SupportTicket, SupportMessage
 from flask import send_file
 from io import BytesIO
 from progress_analyzer import generate_progress_commentary
