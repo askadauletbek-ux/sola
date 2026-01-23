@@ -2963,9 +2963,7 @@ def confirm_analysis():
             BodyAnalysis.timestamp.desc()).first()
 
         # --- ЗАЩИТА: Проверка 7 дней ---
-        if previous_analysis and previous_analysis.timestamp:
-            # Сравниваем даты (без времени), чтобы было честно по календарю, или с временем (как вам удобнее)
-            # Здесь строгая проверка по времени:
+        if user.initial_body_analysis_id and previous_analysis and previous_analysis.timestamp:
 
             # Исправление TypeError: приводим время из БД к UTC, если оно naive
             prev_ts = previous_analysis.timestamp
