@@ -8088,6 +8088,78 @@ def admin_manage_recipe(r_id):
         db.session.rollback()
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@app.route('/admin/support')
+@admin_required
+def admin_support_page():
+    # Загружаем тикеты с данными пользователей
+    tickets = db.session.query(SupportTicket, User).join(User, SupportTicket.user_id == User.id).order_by(
+        SupportTicket.updated_at.desc()).all()
+
+    tickets_data = []
+    for t, u in tickets:
+        # Собираем сообщения
+        msgs = []
+        sorted_msgs = sorted(t.messages, key=lambda x: x.created_at)
+        for m in sorted_msgs:
+            msgs.append({
+                'sender': m.sender_type,  # 'user' or 'support'
+                'text': m.text,
+                'image_url': m.image_url,
+                'created_at': m.created_at.strftime('%d.%m %H:%M')
+            })
+
+        tickets_data.append({
+            'id': t.id,
+            'user_id': u.id,
+            'user_name': u.name or u.email,
+            'user_email': u.email,
+            'status': t.status,
+            'created_at': t.created_at.strftime('%Y-%m-%d %H:%M'),
+            'updated_at': t.updated_at.strftime('%Y-%m-%d %H:%M'),
+            'messages': msgs,
+            'last_msg': msgs[-1]['text'] if msgs and msgs[-1]['text'] else ('Картинка' if msgs else 'Пусто')
+        })
+
+    return render_template('admin_support.html', tickets=tickets_data)
+
+
+@app.route('/admin/support/reply', methods=['POST'])
+@admin_required
+def admin_support_reply():
+    ticket_id = request.form.get('ticket_id')
+    text = request.form.get('text')
+
+    ticket = SupportTicket.query.get(ticket_id)
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+
+    msg = SupportMessage(
+        ticket_id=ticket.id,
+        sender_type='support',
+        text=text
+    )
+
+    ticket.updated_at = datetime.utcnow()
+    # Если ответили, можно менять статус или оставить как есть.
+    # Обычно если админ ответил, тикет все еще open, ждет реакции юзера.
+
+    db.session.add(msg)
+    db.session.commit()
+
+    return jsonify({'status': 'ok', 'time': msg.created_at.strftime('%d.%m %H:%M')})
+
+
+@app.route('/admin/support/close/<int:ticket_id>', methods=['POST'])
+@admin_required
+def admin_support_close(ticket_id):
+    ticket = SupportTicket.query.get(ticket_id)
+    if ticket:
+        ticket.status = 'closed' if ticket.status == 'open' else 'open'
+        ticket.updated_at = datetime.utcnow()
+        db.session.commit()
+    return redirect(url_for('admin_support_page'))
+
 # В app.py добавьте этот роут:
 @app.route("/admin/recipes/page")
 @admin_required

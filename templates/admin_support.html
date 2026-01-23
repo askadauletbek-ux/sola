@@ -1,0 +1,224 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<script>
+  window.__tickets = {{ tickets|tojson }};
+  window.__urls = {
+    reply: "{{ url_for('admin_support_reply') }}",
+    toggleStatus: "{{ url_for('admin_support_close', ticket_id=0) }}".replace(/0$/, ""),
+
+    // Ссылки для навигации (как в дашборде)
+    dashboard: "{{ url_for('admin_dashboard') }}",
+    admin_applications_list: "{{ url_for('admin_applications_list') }}",
+    groups: "{{ url_for('admin_groups_list') }}",
+    squads_dist: "{{ url_for('admin_squads_distribution') }}",
+    aiq: "{{ url_for('admin_ai_queue') }}",
+    jobs: "{{ url_for('admin_jobs') }}",
+    prompts: "{{ url_for('admin_prompts') }}",
+    broadcast: "{{ url_for('admin_broadcast') }}",
+    reports: "{{ url_for('admin_reports') }}",
+    audit: "{{ url_for('admin_audit') }}",
+    analytics: "{{ url_for('admin_analytics_page') }}",
+    recipes: "{{ url_for('admin_recipes_page') }}"
+  };
+</script>
+
+<div class="max-w-7xl mx-auto px-4 py-6" x-data="supportPage()">
+  <h1 class="text-3xl font-bold mb-6">Техническая поддержка</h1>
+
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+    <div class="flex flex-wrap gap-2">
+      <a :href="urls.dashboard" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300">⬅ Дашборд</a>
+      <a :href="urls.admin_applications_list" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Заявки</a>
+      </div>
+  </div>
+
+  <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-200px)]">
+
+    <div class="w-full lg:w-1/3 bg-white rounded-lg shadow flex flex-col">
+      <div class="p-4 border-b bg-gray-50 rounded-t-lg">
+        <input x-model="search" type="text" placeholder="Поиск по имени/ID..." class="w-full border rounded-lg px-3 py-2 mb-2">
+        <div class="flex gap-2">
+            <button @click="filter='all'" :class="filter==='all' ? 'bg-indigo-600 text-white' : 'bg-gray-200'" class="px-3 py-1 rounded text-sm">Все</button>
+            <button @click="filter='open'" :class="filter==='open' ? 'bg-green-600 text-white' : 'bg-gray-200'" class="px-3 py-1 rounded text-sm">Открытые</button>
+            <button @click="filter='closed'" :class="filter==='closed' ? 'bg-gray-600 text-white' : 'bg-gray-200'" class="px-3 py-1 rounded text-sm">Архив</button>
+        </div>
+      </div>
+
+      <div class="overflow-y-auto flex-1">
+        <template x-for="t in filteredTickets" :key="t.id">
+          <div @click="selectTicket(t)"
+               class="p-4 border-b cursor-pointer hover:bg-gray-50 transition relative"
+               :class="activeTicket && activeTicket.id === t.id ? 'bg-indigo-50 border-l-4 border-l-indigo-600' : ''">
+
+            <div class="flex justify-between items-start mb-1">
+              <span class="font-bold text-gray-800" x-text="t.user_name"></span>
+              <span class="text-xs text-gray-400" x-text="formatDate(t.updated_at)"></span>
+            </div>
+
+            <div class="text-sm text-gray-600 truncate" x-text="t.last_msg"></div>
+
+            <div class="flex justify-between items-center mt-2">
+                <span class="text-xs px-2 py-0.5 rounded-full"
+                      :class="t.status==='open' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
+                      x-text="t.status==='open' ? 'Открыт' : 'Закрыт'"></span>
+                <span class="text-xs text-gray-400">#<span x-text="t.id"></span></span>
+            </div>
+          </div>
+        </template>
+        <div x-show="filteredTickets.length === 0" class="p-4 text-center text-gray-500">
+            Тикетов не найдено
+        </div>
+      </div>
+    </div>
+
+    <div class="w-full lg:w-2/3 bg-white rounded-lg shadow flex flex-col relative" x-data="{ replyText: '' }">
+
+      <template x-if="!activeTicket">
+        <div class="flex-1 flex items-center justify-center text-gray-400">
+          Выберите диалог слева
+        </div>
+      </template>
+
+      <template x-if="activeTicket">
+        <div class="flex flex-col h-full">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
+                <div>
+                    <h2 class="text-xl font-bold">Чат с <span x-text="activeTicket.user_name"></span></h2>
+                    <div class="text-sm text-gray-500">Email: <span x-text="activeTicket.user_email"></span></div>
+                </div>
+                <form method="POST" :action="urls.toggleStatus + activeTicket.id">
+                    <button type="submit"
+                            class="px-4 py-2 rounded text-sm font-bold"
+                            :class="activeTicket.status === 'open' ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-green-100 text-green-700 hover:bg-green-200'"
+                            x-text="activeTicket.status === 'open' ? 'Закрыть обращение' : 'Открыть снова'">
+                    </button>
+                </form>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-100" id="chatContainer">
+                <template x-for="msg in activeTicket.messages">
+                    <div class="flex w-full" :class="msg.sender==='support' ? 'justify-end' : 'justify-start'">
+                        <div class="max-w-[70%] rounded-lg p-3 shadow-sm relative"
+                             :class="msg.sender==='support' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white text-gray-800 rounded-bl-none'">
+
+                            <template x-if="msg.image_url">
+                                <a :href="msg.image_url" target="_blank" class="block mb-2">
+                                    <img :src="msg.image_url" class="rounded max-h-48 object-cover border border-white/20">
+                                </a>
+                            </template>
+
+                            <div class="whitespace-pre-wrap" x-text="msg.text"></div>
+
+                            <div class="text-[10px] mt-1 text-right opacity-70" x-text="msg.created_at"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <div class="p-4 border-t bg-white rounded-b-lg">
+                <template x-if="activeTicket.status === 'open'">
+                    <div class="flex gap-2">
+                        <textarea x-model="replyText"
+                                  class="flex-1 border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                                  rows="2"
+                                  placeholder="Напишите ответ..."></textarea>
+                        <button @click="sendReply(activeTicket.id, replyText); replyText=''"
+                                class="bg-indigo-600 text-white px-4 rounded-lg hover:bg-indigo-700 font-medium">
+                            Отправить
+                        </button>
+                    </div>
+                </template>
+                <template x-if="activeTicket.status !== 'open'">
+                    <div class="text-center text-gray-500 py-2 bg-gray-50 rounded border border-dashed">
+                        Тикет закрыт. Откройте его заново, чтобы написать ответ.
+                    </div>
+                </template>
+            </div>
+        </div>
+      </template>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function supportPage() {
+    return {
+        tickets: window.__tickets || [],
+        urls: window.__urls,
+        search: '',
+        filter: 'all', // all, open, closed
+        activeTicket: null,
+
+        get filteredTickets() {
+            return this.tickets.filter(t => {
+                // Фильтр по статусу
+                if (this.filter === 'open' && t.status !== 'open') return false;
+                if (this.filter === 'closed' && t.status !== 'closed') return false;
+
+                // Поиск
+                const q = this.search.toLowerCase();
+                return t.user_name.toLowerCase().includes(q) ||
+                       t.id.toString().includes(q) ||
+                       t.user_email.toLowerCase().includes(q);
+            });
+        },
+
+        selectTicket(ticket) {
+            this.activeTicket = ticket;
+            // Скролл вниз чата после рендера
+            setTimeout(() => {
+                const el = document.getElementById('chatContainer');
+                if(el) el.scrollTop = el.scrollHeight;
+            }, 50);
+        },
+
+        formatDate(dateStr) {
+            // dateStr приходит в формате YYYY-MM-DD HH:MM, можно просто обрезать или оставить
+            return dateStr.split(' ')[0];
+        },
+
+        async sendReply(ticketId, text) {
+            if (!text.trim()) return;
+
+            // Оптимистичное обновление UI
+            const newMsg = {
+                sender: 'support',
+                text: text,
+                created_at: 'Сейчас',
+                image_url: null
+            };
+            this.activeTicket.messages.push(newMsg);
+
+            // Скролл
+            setTimeout(() => {
+                const el = document.getElementById('chatContainer');
+                if(el) el.scrollTop = el.scrollHeight;
+            }, 50);
+
+            // Отправка на сервер
+            const formData = new FormData();
+            formData.append('ticket_id', ticketId);
+            formData.append('text', text);
+
+            try {
+                const res = await fetch(this.urls.reply, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if(data.status === 'ok') {
+                    // Обновляем время сообщения реальным с сервера
+                    newMsg.created_at = data.time;
+                }
+            } catch (e) {
+                alert('Ошибка отправки сообщения');
+                console.error(e);
+            }
+        }
+    }
+}
+</script>
+
+{% endblock %}
