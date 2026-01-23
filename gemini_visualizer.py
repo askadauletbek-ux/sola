@@ -12,43 +12,42 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Модель оставлена без изменений, как вы просили
+# Убедитесь, что эта модель доступна (например, gemini-1.5-flash или gemini-2.0-flash-exp)
+# Если 2.5 недоступна, используйте "gemini-1.5-flash"
 MODEL_NAME = "gemini-2.5-flash-image"
 
-def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, scene_id: str) -> str:
+
+def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> str:
     """
-    Обновленный промпт: сфокусирован на СОХРАНЕНИИ контекста (фон, одежда, лицо)
-    и изменении ТОЛЬКО физических параметров тела.
+    Промпт сфокусирован на сохранении исходного изображения (фон, одежда, поза)
+    и изменении только морфологии тела под заданные метрики.
     """
     height = metrics.get("height")
     weight = metrics.get("weight")
     fat_pct = metrics.get("fat_pct")
     muscle_pct = metrics.get("muscle_pct")
 
-    # Мы убрали принудительное описание черной одежды (clothing_description),
-    # так как теперь задача — сохранить то, что надето на пользователе.
-
+    # Формируем описание задачи для модели
+    # Мы убрали жесткое описание одежды и фона, заменив его на инструкции по сохранению.
     return f"""
-# TASK: ANATOMICAL BODY COMPOSITION ADJUSTMENT
-Generate a highly realistic photograph based strictly on the provided input image. 
-Your goal is to modify the subject's body shape to match the specific biometric data below, while keeping everything else identical.
+# SYSTEM ROLE: EXPERT ANATOMICAL PHOTO EDITOR
+Your task is to realistically modify the physique of the person in the provided input image to match specific biometric data, while STRICTLY PRESERVING the original context.
 
-# STRICT PRESERVATION RULES (DO NOT CHANGE)
-1. **Background & Lighting:** KEEP the exact original background, shadows, and lighting conditions. DO NOT replace with a white studio background.
-2. **Clothing:** KEEP the subject's original clothing style, color, and texture. Only adjust the fit of the fabric naturally to match the new body measurements.
-3. **Face & Identity:** The face must be an EXACT, UNALTERED match to the source image.
+# PRESERVATION DIRECTIVES (DO NOT CHANGE)
+1. **Background & Lighting:** Keep the background, shadows, and lighting EXACTLY as they are in the source image. DO NOT replace with a white studio background.
+2. **Clothing:** Preserve the original clothing style, color, and texture. Only adjust the fit/drape of the fabric to realistically match the new body shape (e.g., tighter on muscles, looser if weight drops).
+3. **Face & Identity:** The face must remain UNCHANGED.
 4. **Pose:** Maintain the exact original pose.
 
-# TARGET BIOMETRICS FOR "{variant_label}"
+# TARGET BODY CONFIGURATION ({variant_label.upper()})
 - **Sex:** {sex}
-- **Height:** {height}
-- **Weight:** {weight}
-- **Body Fat:** {fat_pct}% (Visual cue: {"High definition, vascularity" if fat_pct < 15 else "Soft contours, smooth skin"}).
-- **Muscle Mass:** {muscle_pct}% (Visual cue: {"Hypertrophy, athletic build" if muscle_pct > 35 else "Average tone"}).
+- **Height:** {height} cm
+- **Weight:** {weight} kg
+- **Body Fat:** {fat_pct}% (Visual cue: {"Visible abs, vascularity, tight skin" if fat_pct < 15 else "Softer definition, smooth contours"}).
+- **Muscle Mass:** {muscle_pct}% (Visual cue: {"Hypertrophy, dense muscle volume" if muscle_pct > 40 else "Average athletic tone"}).
 
-# OUTPUT QUALITY
-- Photorealistic, no CGI artifacts.
-- Seamless blending of the new body shape with the original environment.
+# EXECUTION
+Generate a photorealistic result that looks like the original photo was taken of the subject with this exact new body composition. No CGI artifacts.
 """.strip()
 
 def _extract_first_image_bytes(response) -> bytes:
@@ -82,7 +81,7 @@ def _compute_pct(value: float, weight: float) -> float:
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> Tuple[str, str]:
     """
-    Генерирует изображения До и После, нормализуя входные данные для промпта.
+    Генерирует изображения До и После, используя загруженное фото (avatar_bytes) как референс.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -90,7 +89,6 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
 
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
-    scene_id = f"scene-{uuid.uuid4().hex}"
 
     # 1. Подготовка ТЕКУЩИХ метрик (Точка А)
     curr_weight = metrics_current.get("weight", 0)
@@ -107,22 +105,39 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
         "muscle_pct": metrics_target.get("muscle_pct")
     }
 
-    # Генерация текущего состояния
-    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", scene_id)
+    # Генерация текущего состояния (реконструкция с уточненными цифрами)
+    # Мы передаем avatar_bytes и просим применить текущие метрики (это может немного "подтянуть" фото под цифры)
+    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current")
     contents_curr = [
         types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
         types.Part(text=prompt_curr),
     ]
-    resp_curr = client.models.generate_content(model=MODEL_NAME, contents=contents_curr)
+    # Используем config для контроля качества (если требуется)
+    generate_config = types.GenerateContentConfig(
+        temperature=0.4, # Понижаем температуру для большей точности следования референсу
+        top_p=0.95,
+        top_k=40,
+        candidate_count=1
+    )
+
+    resp_curr = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_curr,
+        config=generate_config
+    )
     curr_png = _extract_first_image_bytes(resp_curr)
 
     # Генерация целевого состояния
-    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target", scene_id)
+    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target")
     contents_tgt = [
-        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
+        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)), # Используем оригинал как исходник
         types.Part(text=prompt_tgt),
     ]
-    resp_tgt = client.models.generate_content(model=MODEL_NAME, contents=contents_tgt)
+    resp_tgt = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_tgt,
+        config=generate_config
+    )
     tgt_png = _extract_first_image_bytes(resp_tgt)
 
     # Сохранение в БД
