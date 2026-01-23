@@ -14,6 +14,39 @@ def _current_user():
 
 
 # --- ИСТОРИЯ ДЕФИЦИТА И ЗАМЕРОВ (НОВОЕ) ---
+@user_bp.route('/api/me/delete', methods=['POST'])
+def delete_my_account():
+    user = _current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    try:
+        # 1. Удаляем связанные данные (журналы, замеры, активность)
+        MealLog.query.filter_by(user_id=user.id).delete()
+        Activity.query.filter_by(user_id=user.id).delete()
+        BodyAnalysis.query.filter_by(user_id=user.id).delete()
+        Diet.query.filter_by(user_id=user.id).delete()
+
+        # 2. Удаляем подписки и записи на тренировки
+        Subscription.query.filter_by(user_id=user.id).delete()
+        TrainingSignup.query.filter_by(user_id=user.id).delete()
+
+        # 3. Удаляем уведомления
+        Notification.query.filter_by(user_id=user.id).delete()
+
+        # 4. Удаляем самого пользователя
+        db.session.delete(user)
+        db.session.commit()
+
+        # 5. Очищаем сессию
+        session.clear()
+
+        return jsonify({"ok": True, "message": "Account deleted successfully"})
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"Delete account error: {e}")  # Логируем ошибку в консоль сервера
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @user_bp.route('/api/history/deficit', methods=['GET'])
 def get_deficit_history():
