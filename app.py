@@ -2820,20 +2820,26 @@ def upload_analysis():
             if not result.get('muscle_mass') and last_analysis.muscle_mass:
                 result['muscle_mass'] = last_analysis.muscle_mass
 
-        # Список обязательных полей
-        required_keys = [
-            'weight', 'muscle_mass', 'muscle_percentage', 'body_water',
-            'protein_percentage', 'skeletal_muscle_mass',
-            'visceral_fat_rating', 'metabolism', 'waist_hip_ratio', 'body_age',
-            'fat_mass', 'bmi', 'fat_free_body_weight'
-        ]
+                # Список обязательных полей (оставили только критически важные)
+        required_keys = ['weight', 'muscle_mass', 'fat_mass', 'metabolism']
         missing_keys = [key for key in required_keys if key not in result or result.get(key) is None]
 
         if missing_keys:
-            missing_str = ', '.join(missing_keys)
+                    # Словарь для перевода полей на русский
+            field_names_ru = {
+                        'weight': 'Вес',
+                        'muscle_mass': 'Мышечная масса',
+                        'fat_mass': 'Жировая масса',
+                        'metabolism': 'Метаболизм (BMR)',
+                        'body_age': 'Метаболический возраст'
+            }
+                    # Формируем список отсутствующих полей на русском
+            missing_ru = [field_names_ru.get(k, k) for k in missing_keys]
+            missing_str = ', '.join(missing_ru)
+
             return jsonify({
-                "success": False,
-                "error": f"Не удалось распознать все показатели. Попробуйте другое фото. Отсутствуют: {missing_str}"
+                        "success": False,
+                        "error": f"Не удалось распознать обязательные показатели: {missing_str}. Попробуйте сделать более четкое фото или загрузить другой файл."
             }), 400
 
         # --- ШАГ 2: Генерация целей ---
