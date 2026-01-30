@@ -2975,28 +2975,41 @@ def confirm_analysis():
                 return jsonify(
                     {"success": False, "error": f"Следующий замер доступен через {7 - diff.days} дн."}), 400
         # -------------------------------
-
-        # 3. Создаем и наполняем новую запись анализа
+                # 3. Создаем и наполняем новую запись анализа
         new_analysis_entry = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
 
-        # 4. (ВАЖНО) Переносим ВСЕ метрики из JSON в новую запись
-        # (Используем .get(), чтобы избежать ошибок, если поле отсутствует)
-        new_analysis_entry.height = analysis_data.get('height')
-        new_analysis_entry.weight = analysis_data.get('weight')
-        new_analysis_entry.muscle_mass = analysis_data.get('muscle_mass')
-        new_analysis_entry.muscle_percentage = analysis_data.get('muscle_percentage')
-        new_analysis_entry.body_water = analysis_data.get('body_water')
-        new_analysis_entry.protein_percentage = analysis_data.get('protein_percentage')
-        new_analysis_entry.skeletal_muscle_mass = analysis_data.get('skeletal_muscle_mass')
-        new_analysis_entry.visceral_fat_rating = analysis_data.get('visceral_fat_rating')
-        new_analysis_entry.metabolism = analysis_data.get('metabolism')
-        new_analysis_entry.waist_hip_ratio = analysis_data.get('waist_hip_ratio')
-        new_analysis_entry.body_age = analysis_data.get('body_age')
-        new_analysis_entry.fat_mass = analysis_data.get('fat_mass')
-        new_analysis_entry.bmi = analysis_data.get('bmi')
-        new_analysis_entry.fat_free_body_weight = analysis_data.get('fat_free_body_weight')
+                # 4. (ВАЖНО) Валидация и перенос метрик
+                # Список обязательных полей: Мышечная масса, Жировая масса, Возраст тела, Базовый обмен (metabolism)
+        required_fields = ['muscle_mass', 'fat_mass', 'body_age', 'metabolism']
+        missing = [field for field in required_fields if analysis_data.get(field) is None]
 
-        # 5. Обновляем цели пользователя и согласие (если пришли)
+        if missing:
+            return jsonify({
+                "success": False,
+                "error": "missing_metrics",
+                "missing_fields": missing,
+                "message": f"Отсутствуют обязательные показатели: {', '.join(missing)}. Пожалуйста, загрузите анализ заново."
+            }), 400
+
+                # Переносим метрики (обязательные берем напрямую, остальные - 0 если нет)
+        new_analysis_entry.muscle_mass = analysis_data['muscle_mass']
+        new_analysis_entry.fat_mass = analysis_data['fat_mass']
+        new_analysis_entry.body_age = analysis_data['body_age']
+        new_analysis_entry.metabolism = analysis_data['metabolism']
+
+                # Опциональные (если нет -> 0)
+        new_analysis_entry.height = analysis_data.get('height') or 0
+        new_analysis_entry.weight = analysis_data.get('weight') or 0
+        new_analysis_entry.muscle_percentage = analysis_data.get('muscle_percentage') or 0
+        new_analysis_entry.body_water = analysis_data.get('body_water') or 0
+        new_analysis_entry.protein_percentage = analysis_data.get('protein_percentage') or 0
+        new_analysis_entry.skeletal_muscle_mass = analysis_data.get('skeletal_muscle_mass') or 0
+        new_analysis_entry.visceral_fat_rating = analysis_data.get('visceral_fat_rating') or 0
+        new_analysis_entry.waist_hip_ratio = analysis_data.get('waist_hip_ratio') or 0
+        new_analysis_entry.bmi = analysis_data.get('bmi') or 0
+        new_analysis_entry.fat_free_body_weight = analysis_data.get('fat_free_body_weight') or 0
+
+                # 5. Обновляем цели пользователя и согласие (если пришли)
         if 'fat_mass_goal' in analysis_data:
             user.fat_mass_goal = analysis_data.get('fat_mass_goal')
         if 'muscle_mass_goal' in analysis_data:
