@@ -3010,7 +3010,7 @@ def confirm_analysis():
                 # Переносим метрики (обязательные берем напрямую, остальные - 0 если нет)
         new_analysis_entry.muscle_mass = analysis_data['muscle_mass']
         new_analysis_entry.fat_mass = analysis_data['fat_mass']
-        new_analysis_entry.body_age = analysis_data['body_age']
+        new_analysis_entry.body_age = analysis_data.get('body_age') or 0
         new_analysis_entry.metabolism = analysis_data['metabolism']
 
                 # Опциональные (если нет -> 0)
