@@ -2986,15 +2986,25 @@ def confirm_analysis():
 
                 # 4. (ВАЖНО) Валидация и перенос метрик
                 # Список обязательных полей: Мышечная масса, Жировая масса, Возраст тела, Базовый обмен (metabolism)
-        required_fields = ['muscle_mass', 'fat_mass', 'body_age', 'metabolism']
+        # 4. (ВАЖНО) Валидация и перенос метрик
+        # Список обязательных полей: Мышечная масса, Жировая масса, Базовый обмен (metabolism). Возраст тела убрали.
+        required_fields = ['muscle_mass', 'fat_mass', 'metabolism']
         missing = [field for field in required_fields if analysis_data.get(field) is None]
 
         if missing:
+            field_names_ru = {
+                'muscle_mass': 'Мышечная масса',
+                'fat_mass': 'Жировая масса',
+                'metabolism': 'Метаболизм',
+                'body_age': 'Возраст тела'
+            }
+            missing_ru = [field_names_ru.get(k, k) for k in missing]
+
             return jsonify({
                 "success": False,
                 "error": "missing_metrics",
                 "missing_fields": missing,
-                "message": f"Отсутствуют обязательные показатели: {', '.join(missing)}. Пожалуйста, загрузите анализ заново."
+                "message": f"Отсутствуют обязательные показатели: {', '.join(missing_ru)}. Пожалуйста, загрузите анализ заново."
             }), 400
 
                 # Переносим метрики (обязательные берем напрямую, остальные - 0 если нет)
