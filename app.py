@@ -1270,10 +1270,6 @@ def instructions_page():
     section = request.args.get('section')
     return render_template('instructions.html', scroll_to=section)
 
-# Убедись, что у тебя есть:
-# from sqlalchemy import func
-# from flask import url_for
-@# lib/backend/app.py
 
 @app.route('/api/app/profile_data')
 @login_required
