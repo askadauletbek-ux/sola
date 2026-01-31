@@ -3334,7 +3334,7 @@ def generate_diet():
         flash("Для точного расчета рациона нужен актуальный анализ состава тела (вес и метаболизм).", "warning")
         return jsonify({"redirect": url_for('profile')})
 
-    # 2. Сбор расширенного контекста (как в Ассистенте)
+    # 2. Сбор расширенного контекста
     # Считаем возраст
     age = "30"  # Дефолт
     if user.date_of_birth:
@@ -3354,7 +3354,7 @@ def generate_diet():
     current_weight = latest_analysis.weight
     bmr = latest_analysis.metabolism  # Базовый обмен
 
-    # Определяем цель текстом, если она не задана явно в запросе
+    # Определяем цель текстом
     goal_text = "поддержание формы"
     if goal_weight:
         if goal_weight < current_weight:
@@ -3362,7 +3362,7 @@ def generate_diet():
         elif goal_weight > current_weight:
             goal_text = "набор мышечной массы"
 
-    # 3. Умный промпт (Синхронизирован с assistant_bp)
+    # 3. Умный промпт
     system_prompt = f"""
     Ты — Kilo, элитный спортивный диетолог и нутрициолог.
     Твоя задача: Составить идеальный, вкусный и сытный рацион на 1 день.
@@ -3386,7 +3386,7 @@ def generate_diet():
     ПРАВИЛА ГЕНЕРАЦИИ МЕНЮ:
     - Блюда должны быть реалистичными и вкусными.
     - Обязательно укажи рецепт.
-    - Соблюдай БЖУ (белка достаточно для мышц).
+    - Соблюдай БЖУ.
 
     ВЕРНИ ТОЛЬКО JSON:
     {{
@@ -3403,23 +3403,23 @@ def generate_diet():
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",  # Используем лучшую модель
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Ты профессиональный диетолог. Отвечай строго в формате JSON."},
+                # --- ИСПРАВЛЕНО ЗДЕСЬ: Передаем system_prompt, а не заглушку ---
+                {"role": "system", "content": system_prompt},
                 {"role": "user",
-                 "content": f"Составь рацион для {user.name}. Предпочтения: {request.args.get('preferences', 'сбалансированное питание')}."}
+                 "content": f"Предпочтения: {request.args.get('preferences', 'сбалансированное питание')}."}
             ],
             temperature=0.7,
-            response_format={"type": "json_object"},  # Гарантия JSON
+            response_format={"type": "json_object"},
             max_tokens=1500
         )
 
         content = response.choices[0].message.content.strip()
         diet_data = json.loads(content)
 
-        # Валидация калорий (защита от "голодных" диет)
+        # Валидация калорий (для отладки)
         if diet_data.get('total_kcal', 0) < bmr:
-            # Если AI ошибся и дал меньше BMR, можно либо перезапросить, либо (для простоты) просто логировать
             print(f"WARNING: AI generated too low calories ({diet_data.get('total_kcal')}) vs BMR ({bmr})")
 
         # 4. Сохранение в БД

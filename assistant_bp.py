@@ -15,7 +15,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not set in environment. OpenAI calls will fail.")
 
-# Используем мощную модель для лучшего контекста
 MODEL_NAME = os.getenv("KILOGRAI_MODEL", "gpt-4o")
 
 # Параметры генерации
@@ -124,10 +123,9 @@ def _call_openai(messages, temperature=0.5, max_tokens=1000, json_mode=False):
         return None
 
 
-# --- НОВЫЙ ХЕЛПЕР ДЛЯ КРАСИВОГО ВЫВОДА МЕНЮ В ЧАТ ---
 def format_diet_string(diet_plan):
     """Превращает JSON диеты в красивый текст для чата."""
-    if not diet_plan: return ""
+    if not diet_plan or not isinstance(diet_plan, dict): return ""
 
     text = "\n\n🍽 **Твой план питания:**\n"
 
@@ -140,20 +138,22 @@ def format_diet_string(diet_plan):
 
     for key, title in mapping.items():
         items = diet_plan.get(key, [])
-        if items:
+        if items and isinstance(items, list):
             text += f"\n**{title}:**"
             for item in items:
-                name = item.get('name', 'Блюдо')
-                grams = item.get('grams', 0)
-                kcal = item.get('kcal', 0)
-                # Добавляем строку блюда
-                text += f"\n- {name} ({grams}г) — {kcal} ккал"
+                if isinstance(item, dict):
+                    name = item.get('name', 'Блюдо')
+                    grams = item.get('grams', 0)
+                    kcal = item.get('kcal', 0)
+                    text += f"\n- {name} ({grams}г) — {kcal} ккал"
             text += "\n"
 
-    # Итого
-    text += f"\n🔥 **Итого:** {diet_plan.get('total_kcal', 0)} ккал " \
-            f"(Б: {diet_plan.get('protein', 0)} / Ж: {diet_plan.get('fat', 0)} / У: {diet_plan.get('carbs', 0)})"
+    total = diet_plan.get('total_kcal', 0)
+    p = diet_plan.get('protein', 0)
+    f = diet_plan.get('fat', 0)
+    c = diet_plan.get('carbs', 0)
 
+    text += f"\n🔥 **Итого:** {total} ккал (Б: {p} / Ж: {f} / У: {c})"
     return text
 
 
@@ -222,13 +222,25 @@ def handle_chat():
         if response_json_str:
             try:
                 resp_data = json.loads(response_json_str)
+
+                # ЗАЩИТА: Проверяем, что resp_data это словарь
+                if not isinstance(resp_data, dict):
+                    raise ValueError("OpenAI returned non-dict JSON")
+
                 ai_intro = resp_data.get('chat_message', 'Готово!')
                 diet_plan = resp_data.get('diet_plan')
 
                 final_text = ai_intro
 
-                # Если план сгенерирован -> сохраняем и ФОРМИРУЕМ ТЕКСТ
-                if diet_plan:
+                # ЗАЩИТА: Если diet_plan пришел строкой (бывает у LLM), парсим его
+                if isinstance(diet_plan, str):
+                    try:
+                        diet_plan = json.loads(diet_plan)
+                    except:
+                        diet_plan = None
+
+                # Если план сгенерирован (и это словарь) -> сохраняем и ФОРМИРУЕМ ТЕКСТ
+                if diet_plan and isinstance(diet_plan, dict):
                     # 1. Сохраняем в БД
                     Diet.query.filter_by(user_id=user_id, date=date.today()).delete()
 
@@ -257,7 +269,9 @@ def handle_chat():
 
             except Exception as e:
                 logger.error(f"Diet Gen Error: {e}")
-                return jsonify({"role": "ai", "content": "Ошибка генерации. Попробуйте еще раз."}), 200
+                # Возвращаем дружелюбную ошибку, не роняя сервер
+                return jsonify({"role": "ai",
+                                "content": "Произошла техническая заминка при создании меню. Попробуйте спросить еще раз!"}), 200
 
     # =================================================================================
     # СЦЕНАРИЙ 2: РАБОТА С ТЕКУЩЕЙ ДИЕТОЙ
@@ -293,6 +307,8 @@ def handle_chat():
         if response_json_str:
             try:
                 resp_data = json.loads(response_json_str)
+                if not isinstance(resp_data, dict): raise ValueError("Not a dict")
+
                 action = resp_data.get("action")
                 ai_text = resp_data.get("text", "Готово.")
 
@@ -303,7 +319,15 @@ def handle_chat():
 
                 elif action == "update":
                     new_plan = resp_data.get("diet_plan")
-                    if new_plan:
+
+                    # ЗАЩИТА от строкового diet_plan
+                    if isinstance(new_plan, str):
+                        try:
+                            new_plan = json.loads(new_plan)
+                        except:
+                            new_plan = None
+
+                    if new_plan and isinstance(new_plan, dict):
                         # Обновляем БД
                         current_diet.breakfast = json.dumps(new_plan.get('breakfast', []), ensure_ascii=False)
                         current_diet.lunch = json.dumps(new_plan.get('lunch', []), ensure_ascii=False)
@@ -319,14 +343,15 @@ def handle_chat():
                         menu_string = format_diet_string(new_plan)
                         final_text = f"{ai_text}\n{menu_string}"
                     else:
-                        final_text = "Не удалось перестроить план."
+                        final_text = "Не удалось перестроить план. Попробуйте еще раз."
 
                 chat_history.append({"role": "assistant", "content": final_text})
                 session['chat_history'] = chat_history
                 return jsonify({"role": "ai", "content": final_text}), 200
 
             except Exception as e:
-                return jsonify({"role": "ai", "content": "Ошибка изменения."}), 200
+                logger.error(f"Diet Modify Error: {e}")
+                return jsonify({"role": "ai", "content": "Ошибка при изменении диеты. Попробуйте еще раз."}), 200
         else:
             return jsonify({"role": "ai", "content": "ИИ не ответил."}), 200
 
@@ -334,7 +359,7 @@ def handle_chat():
     # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ
     # =================================================================================
     elif "Показатели" in classifier_text:
-        current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
+        current_ba = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
         if not current_ba:
             return jsonify({"role": "ai", "content": "Нет данных анализа тела. Загрузите фото с весов!"}), 200
 
