@@ -3326,111 +3326,72 @@ def generate_diet():
         flash("Генерация диеты доступна только по подписке.", "warning")
         return redirect(url_for('profile'))
 
-    # 1. Сбор базовых данных
-    latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+    user_id = session.get('user_id')
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
 
-    # Проверка наличия данных
-    if not (latest_analysis and latest_analysis.weight and latest_analysis.metabolism):
-        flash("Для точного расчета рациона нужен актуальный анализ состава тела (вес и метаболизм).", "warning")
+    goal = request.args.get("goal", "maintain")
+    gender = user.sex or "male"
+    preferences = request.args.get("preferences", "")
+    latest_analysis = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
+    required_attrs = ['height', 'weight', 'muscle_mass', 'fat_mass', 'metabolism']
+    if not (latest_analysis and all(getattr(latest_analysis, attr, None) is not None for attr in required_attrs)):
+        flash("Пожалуйста, загрузите актуальный анализ тела для генерации диеты.", "warning")
         return jsonify({"redirect": url_for('profile')})
 
-    # 2. Сбор расширенного контекста
-    # Считаем возраст
-    age = "30"  # Дефолт
-    if user.date_of_birth:
-        today = date.today()
-        age = today.year - user.date_of_birth.year - (
-                    (today.month, today.day) < (user.date_of_birth.month, user.date_of_birth.day))
+    prompt = f"""
+У пользователя следующие параметры:
+Рост: {latest_analysis.height} см
+Вес: {latest_analysis.weight} кг
+Мышечная масса: {latest_analysis.muscle_mass} кг
+Жировая масса: {latest_analysis.fat_mass} кг
+Метаболизм: {latest_analysis.metabolism} ккал
+Цель: {goal}
+Пол: {gender}
+Предпочтения: {preferences}
 
-    # Считаем активность (средние шаги за неделю) для корректного TDEE
-    week_ago = date.today() - timedelta(days=7)
-    avg_steps = db.session.query(func.avg(Activity.steps)).filter(
-        Activity.user_id == user.id, Activity.date >= week_ago
-    ).scalar() or 0
+Составь рацион питания на 1 день: завтрак, обед, ужин, перекус. Для каждого укажи:
+- название блюда ("name")
+- граммовку ("grams")
+- калории ("kcal")
+- подробный пошаговый рецепт приготовления ("recipe")
 
-    # Определяем параметры
-    gender = (user.sex or "male")
-    goal_weight = user.weight_goal
-    current_weight = latest_analysis.weight
-    bmr = latest_analysis.metabolism  # Базовый обмен
-
-    # Определяем цель текстом
-    goal_text = "поддержание формы"
-    if goal_weight:
-        if goal_weight < current_weight:
-            goal_text = "похудение (жиросжигание)"
-        elif goal_weight > current_weight:
-            goal_text = "набор мышечной массы"
-
-    # 3. Умный промпт
-    system_prompt = f"""
-    Ты — Kilo, элитный спортивный диетолог и нутрициолог.
-    Твоя задача: Составить идеальный, вкусный и сытный рацион на 1 день.
-
-    ПОЛЬЗОВАТЕЛЬ:
-    Имя: {user.name}
-    Пол: {gender}
-    Возраст: {age}
-    Вес: {current_weight} кг
-    Рост: {latest_analysis.height} см
-    Базовый обмен (BMR): {bmr} ккал (Это минимум для выживания в покое!)
-    Активность: ~{int(avg_steps)} шагов в день.
-    Цель: {goal_text}
-
-    ПРАВИЛА РАСЧЕТА КАЛОРИЙ (СТРОГО):
-    1. Рассчитай TDEE (общий расход) на основе BMR и активности.
-    2. Если цель похудение: отними 15-20% от TDEE. НИКОГДА не опускайся ниже BMR! (Минимум {bmr} ккал).
-    3. Если цель набор: добавь 10-15% к TDEE.
-    4. Если цель поддержание: TDEE.
-
-    ПРАВИЛА ГЕНЕРАЦИИ МЕНЮ:
-    - Блюда должны быть реалистичными и вкусными.
-    - Обязательно укажи рецепт.
-    - Соблюдай БЖУ.
-
-    ВЕРНИ ТОЛЬКО JSON:
-    {{
-        "breakfast": [{{"name": "...", "grams": 0, "kcal": 0, "recipe": "..."}}],
-        "lunch": [...],
-        "dinner": [...],
-        "snack": [...],
-        "total_kcal": 0,
-        "protein": 0,
-        "fat": 0,
-        "carbs": 0
-    }}
-    """
+Верни JSON строго по формату:
+```json
+{
+    "breakfast": [{"name": "...", "grams": 0, "kcal": 0, "recipe": "..."}],
+    "lunch": [...],
+    "dinner": [...],
+    "snack": [...],
+    "total_kcal": 0,
+    "protein": 0,
+    "fat": 0,
+    "carbs": 0
+}
+```"""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                # --- ИСПРАВЛЕНО ЗДЕСЬ: Передаем system_prompt, а не заглушку ---
-                {"role": "system", "content": system_prompt},
-                {"role": "user",
-                 "content": f"Предпочтения: {request.args.get('preferences', 'сбалансированное питание')}."}
+                {"role": "system", "content": "Ты профессиональный диетолог. Отвечай строго в формате JSON."},
+                {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            response_format={"type": "json_object"},
             max_tokens=1500
         )
-
         content = response.choices[0].message.content.strip()
+        if '```json' in content:
+            content = content.split('```json')[1].split('```')[0].strip()
         diet_data = json.loads(content)
 
-        # Валидация калорий (для отладки)
-        if diet_data.get('total_kcal', 0) < bmr:
-            print(f"WARNING: AI generated too low calories ({diet_data.get('total_kcal')}) vs BMR ({bmr})")
-
-        # 4. Сохранение в БД
-        # Удаляем старую диету за сегодня
-        existing_diet = Diet.query.filter_by(user_id=user.id, date=date.today()).first()
+        existing_diet = Diet.query.filter_by(user_id=user_id, date=date.today()).first()
         if existing_diet:
             db.session.delete(existing_diet)
             db.session.commit()
 
         diet = Diet(
-            user_id=user.id,
+            user_id=user_id,
             date=date.today(),
             breakfast=json.dumps(diet_data.get('breakfast', []), ensure_ascii=False),
             lunch=json.dumps(diet_data.get('lunch', []), ensure_ascii=False),
@@ -3444,36 +3405,35 @@ def generate_diet():
         db.session.add(diet)
         db.session.commit()
 
-        flash("Новый рацион готов! Приятного аппетита.", "success")
-
-        # 5. Уведомление
+        flash("Диета успешно сгенерирована!", "success")
         from notification_service import send_user_notification
         send_user_notification(
             user_id=user.id,
-            title="🍽️ Свежий рацион готов!",
-            body=f"План на сегодня: {diet_data.get('total_kcal', 'N/A')} ккал. Заходи посмотреть!",
+            title="🍽️ Ваша диета готова!",
+            body=f"Рацион на сегодня сгенерирован. Калории: {diet_data.get('total_kcal', 'N/A')} ккал.",
             type='success',
             data={"route": "/diet"}
         )
 
-        # Аналитика
         try:
             amplitude.track(BaseEvent(
-                event_type="Diet Generated (Button)",
+                event_type="Diet Generated",
                 user_id=str(user.id),
                 event_properties={
-                    "goal": goal_text,
-                    "total_kcal": diet_data.get('total_kcal')
+                    "goal": goal,
+                    "total_kcal": diet_data.get('total_kcal'),
+                    "has_preferences": bool(preferences)
                 }
             ))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Amplitude error: {e}")
 
         return jsonify({"redirect": "/diet"})
 
     except Exception as e:
         flash(f"Ошибка генерации диеты: {e}", "error")
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/edit_profile', methods=['POST'])
