@@ -3013,199 +3013,175 @@ from flask import jsonify # Убедись, что jsonify импортиров�
 def confirm_analysis():
     user = get_current_user()
 
-    # --- ЛОГИКА POST-ЗАПРОСА (Сохранение данных от Flutter) ---
+    # --- ЛОГИКА POST (Сохранение) ---
     if request.method == 'POST':
+        # 1. Пытаемся получить JSON (для мобильного приложения)
+        # force=True заставляет парсить JSON даже если заголовок Content-Type неверный
+        api_data = request.get_json(force=True, silent=True)
 
-        # 1. Читаем JSON, который прислал Flutter
-        analysis_data = request.get_json(force=True, silent=True)
-        if not analysis_data:
-            return jsonify({"success": False, "error": "Нет данных от приложения"}), 400
+        if api_data:
+            print(f"DEBUG: API Request detected. Data: {api_data}")  # Лог в консоль
 
-        # 2. Получаем предыдущий замер ДО сохранения нового
-        previous_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
-            BodyAnalysis.timestamp.desc()).first()
+            # --- ВАЛИДАЦИЯ УДАЛЕНА ПО ЗАПРОСУ ---
+            # Теперь не возвращаем 400, если нет muscle_mass, fat_mass или metabolism.
 
-        # --- ЗАЩИТА: Проверка 7 дней ---
-        if user.initial_body_analysis_id and previous_analysis and previous_analysis.timestamp:
+            try:
+                # 2. Проверка времени (анти-спам замерами, 7 дней)
+                last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
+                    BodyAnalysis.timestamp.desc()).first()
 
-            # Исправление TypeError: приводим время из БД к UTC, если оно naive
-            prev_ts = previous_analysis.timestamp
-            if prev_ts.tzinfo is None:
-                prev_ts = prev_ts.replace(tzinfo=UTC)
+                # Если нужно отключить проверку 7 дней для тестов, закомментируйте блок ниже
+                if user.initial_body_analysis_id and last_analysis:
+                    prev_ts = last_analysis.timestamp.replace(
+                        tzinfo=UTC) if last_analysis.timestamp.tzinfo is None else last_analysis.timestamp
+                    # Разрешаем обновление, если это "пустой" замер (без веса), иначе проверяем дни
+                    if last_analysis.weight and last_analysis.weight > 0:
+                        if (datetime.now(UTC) - prev_ts).days < 7:
+                            print("DEBUG: Too frequent analysis")
+                            return jsonify(
+                                {"success": False, "error": "Слишком часто. Следующий замер через неделю."}), 400
 
-            diff = datetime.now(UTC) - prev_ts
-            if diff.days < 7:
-                return jsonify(
-                    {"success": False, "error": f"Следующий замер доступен через {7 - diff.days} дн."}), 400
-        # -------------------------------
-                # 3. Создаем и наполняем новую запись анализа
-        new_analysis_entry = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
+                # 3. Создаем запись
+                new_analysis = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
 
-                # 4. (ВАЖНО) Валидация и перенос метрик
-                # Список обязательных полей: Мышечная масса, Жировая масса, Возраст тела, Базовый обмен (metabolism)
-        # 4. (ВАЖНО) Валидация и перенос метрик
-        # Список обязательных полей: Мышечная масса, Жировая масса, Базовый обмен (metabolism). Возраст тела убрали.
-        required_fields = ['muscle_mass', 'fat_mass', 'metabolism']
-        missing = [field for field in required_fields if analysis_data.get(field) is None]
+                # Заполняем поля безопасным методом (0 если нет данных)
+                def get_val(key, default=0):
+                    val = api_data.get(key)
+                    if val is None or val == "":
+                        return default
+                    try:
+                        return float(val)
+                    except (ValueError, TypeError):
+                        return default
 
-        if missing:
-            field_names_ru = {
-                'muscle_mass': 'Мышечная масса',
-                'fat_mass': 'Жировая масса',
-                'metabolism': 'Метаболизм',
-                'body_age': 'Возраст тела'
-            }
-            missing_ru = [field_names_ru.get(k, k) for k in missing]
+                new_analysis.muscle_mass = get_val('muscle_mass')
+                new_analysis.fat_mass = get_val('fat_mass')
+                new_analysis.metabolism = get_val('metabolism')
+                new_analysis.weight = get_val('weight')
+                new_analysis.height = get_val('height')
 
-            return jsonify({
-                "success": False,
-                "error": "missing_metrics",
-                "missing_fields": missing,
-                "message": f"Отсутствуют обязательные показатели: {', '.join(missing_ru)}. Пожалуйста, загрузите анализ заново."
-            }), 400
+                # Заполняем остальные поля
+                new_analysis.body_age = get_val('body_age')
+                new_analysis.visceral_fat_rating = get_val('visceral_fat_rating')
+                new_analysis.muscle_percentage = get_val('muscle_percentage')
+                new_analysis.body_water = get_val('body_water')
+                new_analysis.protein_percentage = get_val('protein_percentage')
+                new_analysis.skeletal_muscle_mass = get_val('skeletal_muscle_mass')
+                new_analysis.waist_hip_ratio = get_val('waist_hip_ratio')
+                new_analysis.bmi = get_val('bmi')
+                new_analysis.fat_free_body_weight = get_val('fat_free_body_weight')
 
-                # Переносим метрики (обязательные берем напрямую, остальные - 0 если нет)
-        new_analysis_entry.muscle_mass = analysis_data['muscle_mass']
-        new_analysis_entry.fat_mass = analysis_data['fat_mass']
-        new_analysis_entry.body_age = analysis_data.get('body_age') or 0
-        new_analysis_entry.metabolism = analysis_data['metabolism']
+                # Обновляем цели, если прислали
+                if 'fat_mass_goal' in api_data: user.fat_mass_goal = get_val('fat_mass_goal')
+                if 'muscle_mass_goal' in api_data: user.muscle_mass_goal = get_val('muscle_mass_goal')
 
-                # Опциональные (если нет -> 0)
-        new_analysis_entry.height = analysis_data.get('height') or 0
-        new_analysis_entry.weight = analysis_data.get('weight') or 0
-        new_analysis_entry.muscle_percentage = analysis_data.get('muscle_percentage') or 0
-        new_analysis_entry.body_water = analysis_data.get('body_water') or 0
-        new_analysis_entry.protein_percentage = analysis_data.get('protein_percentage') or 0
-        new_analysis_entry.skeletal_muscle_mass = analysis_data.get('skeletal_muscle_mass') or 0
-        new_analysis_entry.visceral_fat_rating = analysis_data.get('visceral_fat_rating') or 0
-        new_analysis_entry.waist_hip_ratio = analysis_data.get('waist_hip_ratio') or 0
-        new_analysis_entry.bmi = analysis_data.get('bmi') or 0
-        new_analysis_entry.fat_free_body_weight = analysis_data.get('fat_free_body_weight') or 0
+                # Обновляем согласие
+                if 'face_consent' in api_data: user.face_consent = bool(api_data.get('face_consent'))
 
-                # 5. Обновляем цели пользователя и согласие (если пришли)
-        if 'fat_mass_goal' in analysis_data:
-            user.fat_mass_goal = analysis_data.get('fat_mass_goal')
-        if 'muscle_mass_goal' in analysis_data:
-            user.muscle_mass_goal = analysis_data.get('muscle_mass_goal')
+                user.updated_at = datetime.now(UTC)
 
-        # Обновляем согласие на визуализацию, если передано
-        if 'face_consent' in analysis_data:
-            user.face_consent = bool(analysis_data.get('face_consent'))
+                # Сохраняем
+                db.session.add(new_analysis)
+                db.session.flush()  # Получаем ID
 
-        user.updated_at = datetime.now(UTC)
-        db.session.add(new_analysis_entry)
-        db.session.flush()  # Получаем ID новой записи до коммита
+                # Если это первый замер
+                if not user.initial_body_analysis_id:
+                    user.initial_body_analysis_id = new_analysis.id
 
-        # 6. Если это самый первый анализ, устанавливаем его как стартовую точку
-        if not user.initial_body_analysis_id:
-            user.initial_body_analysis_id = new_analysis_entry.id
+                # Логика AI комментария
+                ai_comment_text = None
+                if last_analysis:
+                    try:
+                        ai_comment_text = generate_progress_commentary(user, last_analysis, new_analysis)
+                        if ai_comment_text: new_analysis.ai_comment = ai_comment_text
+                    except Exception as e:
+                        print(f"AI Comment generation warning: {e}")
 
-        # 7. Вызов генератора комментария ИИ (Ваша логика)
-        ai_comment_text = None
-        if previous_analysis:
-            print("DEBUG: Найден предыдущий анализ. Вызываю генератор комментария ИИ...")
-            ai_comment_text = generate_progress_commentary(user, previous_analysis, new_analysis_entry)
-            print(f"DEBUG: Генератор ИИ вернул: {str(ai_comment_text)[:150]}...")
-            if ai_comment_text:
-                new_analysis_entry.ai_comment = ai_comment_text
+                # --- SQUAD SCORING: HEALTHY PROGRESS (30 pts) ---
+                if last_analysis and last_analysis.weight and new_analysis.weight:
+                    prev_w = float(last_analysis.weight)
+                    curr_w = float(new_analysis.weight)
+                    if prev_w > 0:
+                        change_pct = (curr_w - prev_w) / prev_w
+                        if -0.015 <= change_pct <= -0.001:
+                            today = date.today()
+                            start_of_week = today - timedelta(days=today.weekday())
+                            existing_score = SquadScoreLog.query.filter(
+                                SquadScoreLog.user_id == user.id,
+                                SquadScoreLog.category == 'healthy_progress',
+                                func.date(SquadScoreLog.created_at) >= start_of_week
+                            ).first()
+                            if not existing_score:
+                                award_squad_points(user, 'healthy_progress', 30, "Здоровый прогресс веса")
 
-            # --- SQUAD SCORING: HEALTHY PROGRESS (30 pts) ---
-            # Логика: потеря веса от 0.1% до 1.5%
-            if previous_analysis.weight and new_analysis_entry.weight:
-                prev_w = float(previous_analysis.weight)
-                curr_w = float(new_analysis_entry.weight)
+                                # --- AI FEED POST LOGIC ---
+                                if user.initial_body_analysis_id and user.fat_mass_goal:
+                                    try:
+                                        initial_analysis = BodyAnalysis.query.get(user.initial_body_analysis_id)
+                                        if initial_analysis:
+                                            total_lost = initial_analysis.fat_mass - new_analysis.fat_mass
+                                            remaining = new_analysis.fat_mass - user.fat_mass_goal
 
-                if prev_w > 0:
-                    change_pct = (curr_w - prev_w) / prev_w
-                    # change_pct должен быть от -0.015 до -0.001
-                    if -0.015 <= change_pct <= -0.001:
-                        # Проверяем, не получал ли уже бонус на этой неделе
-                        today = date.today()
-                        start_of_week = today - timedelta(days=today.weekday())
+                                            # Создаем пост в ленту
+                                            feed_content = f"Сбросил {total_lost:.1f}кг жира! До цели осталось {remaining:.1f}кг. Идем по графику! 🔥"
+                                            new_post = Post(
+                                                user_id=user.id,
+                                                content=feed_content,
+                                                post_type='achievement',
+                                                is_ai_generated=True
+                                            )
+                                            db.session.add(new_post)
+                                    except Exception as feed_err:
+                                        print(f"Feed post error: {feed_err}")
 
-                        existing_score = SquadScoreLog.query.filter(
-                            SquadScoreLog.user_id == user.id,
-                            SquadScoreLog.category == 'healthy_progress',
-                            func.date(SquadScoreLog.created_at) >= start_of_week
-                        ).first()
+                db.session.commit()
+                print("DEBUG: Analysis saved successfully via API")
 
-                        if not existing_score:
-                            award_squad_points(user, 'healthy_progress', 30, "Здоровый прогресс веса")
-
-                            # --- AI FEED: PROGRESS MILESTONES ---
-                            # Проверяем прогресс по жиросжиганию (если цель задана)
-                        if user.initial_body_analysis_id and user.fat_mass_goal:
-                            initial = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
-                            if initial and initial.fat_mass and previous_analysis and previous_analysis.fat_mass and new_analysis_entry.fat_mass:
-
-                                start_fat = float(initial.fat_mass)
-                                goal_fat = float(user.fat_mass_goal)
-                                prev_fat = float(previous_analysis.fat_mass)
-                                curr_fat = float(new_analysis_entry.fat_mass)
-
-                                total_diff = start_fat - goal_fat
-
-                                if total_diff > 0:  # Цель - похудение
-                                    prev_progress = (start_fat - prev_fat) / total_diff
-                                    curr_progress = (start_fat - curr_fat) / total_diff
-
-                                    # Половина пути (переход через 50%)
-                                    if prev_progress < 0.5 and curr_progress >= 0.5:
-                                        trigger_ai_feed_post(user, "Прошел половину пути к своей цели по весу!")
-
-                                    # Цель достигнута (переход через 100%)
-                                    elif prev_progress < 1.0 and curr_progress >= 1.0:
-                                        trigger_ai_feed_post(user, "Полностью достиг своей цели по трансформации тела!")
-                            # ------------------------------------
-
-                            # ------------------------------------------------
-
-                            # 8. Сохраняем все
-                        db.session.commit()
-
-                # 9. Возвращаем JSON с AI-комментарием
-
-                # ANALYTICS: Body Analysis Confirmed
+                # ANALYTICS
                 try:
                     amplitude.track(BaseEvent(
                         event_type="Body Analysis Confirmed",
                         user_id=str(user.id),
                         event_properties={
-                            "weight": new_analysis_entry.weight,
-                            "fat_mass": new_analysis_entry.fat_mass,
-                            "muscle_mass": new_analysis_entry.muscle_mass,
-                            "has_ai_comment": bool(ai_comment_text),
-                            "is_initial": (user.initial_body_analysis_id == new_analysis_entry.id)
+                            "weight": new_analysis.weight,
+                            "is_initial": (user.initial_body_analysis_id == new_analysis.id)
                         }
                     ))
-                except Exception as e:
-                    print(f"Amplitude error: {e}")
+                    track_event('analysis_confirmed', user.id,
+                                {"is_initial": (user.initial_body_analysis_id == new_analysis.id)})
+                except:
+                    pass
 
-                track_event('analysis_confirmed', user.id,
-                            {"is_initial": (user.initial_body_analysis_id == new_analysis_entry.id)})
+                # 4. ВОЗВРАЩАЕМ JSON 200 (ВАЖНО!)
                 return jsonify({"success": True, "ai_comment": ai_comment_text})
 
-            # --- ЛОГИКА GET-ЗАПРОСА (Для Веб-версии) ---
-    # (Этот код остается таким же, как в вашем исходнике, для поддержки веба)
+            except Exception as e:
+                db.session.rollback()
+                print(f"DEBUG: Error saving analysis: {e}")
+                return jsonify({"success": False, "error": str(e)}), 500
 
-    # 1. Проверяем, есть ли готовый комментарий для отображения (после редиректа)
-    last_ai_comment = session.pop('last_ai_comment', None)
-    if last_ai_comment:
-        return render_template('confirm_analysis.html',
-                               data={},
-                               user=user,
-                               ai_comment=last_ai_comment)
+        else:
+            # 5. Если JSON не пришел, значит это ВЕБ-ФОРМА (Web)
+            print("DEBUG: Web Form Request detected")
 
-    # 2. Если комментария нет, проверяем, есть ли данные для подтверждения
+            # Логика для веба (редиректы)
+            analysis_data = session.get('temp_analysis')
+            if not analysis_data:
+                flash("Данные устарели. Загрузите анализ заново.", "error")
+                return redirect(url_for('profile'))
+
+            # В Веб-версии сохранение может требовать дублирования логики или выноса в сервис
+            session.pop('temp_analysis', None)
+            flash("Функция сохранения через веб в разработке. Пожалуйста, используйте приложение.", "info")
+            return redirect(url_for('profile'))
+
+    # --- ЛОГИКА GET (Отображение страницы подтверждения в Вебе) ---
     if 'temp_analysis' in session:
-        analysis_data = session['temp_analysis']
         return render_template('confirm_analysis.html',
-                               data=analysis_data,
-                               user=user,
-                               ai_comment=None)
+                               data=session['temp_analysis'],
+                               user=user)
 
-    # 3. Если нет ни комментария, ни данных для подтверждения — отправляем в профиль
-    flash("Нет данных для подтверждения. Пожалуйста, загрузите анализ снова.", "warning")
+    flash("Сначала загрузите фото анализа.", "warning")
     return redirect(url_for('profile'))
 
 
