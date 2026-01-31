@@ -1899,6 +1899,10 @@ def api_google_login():
 
 @app.route('/api/register_google', methods=['POST'])
 def api_register_google():
+    """
+    Регистрация с использованием Google ID Token.
+    Сохраняет рост и дату рождения.
+    """
     token = request.form.get('id_token')
 
     try:
@@ -1911,14 +1915,16 @@ def api_register_google():
     name = request.form.get('name', '').strip()
     date_str = request.form.get('date_of_birth', '').strip()
     sex = request.form.get('sex', 'male').strip().lower()
+    height = request.form.get('height')  # <--- Получаем рост
     face_consent = request.form.get('face_consent', 'false').lower() == 'true'
     file = request.files.get('avatar')
 
-    # Генерируем случайный пароль для технической совместимости
+    # Генерируем пароль
     import secrets
     random_pw = secrets.token_urlsafe(16)
     hashed_pw = bcrypt.generate_password_hash(random_pw).decode('utf-8')
 
+    # Аватар
     avatar_file_id = None
     if file and file.filename:
         filename = secure_filename(file.filename)
@@ -1936,11 +1942,13 @@ def api_register_google():
             db.session.flush()
             avatar_file_id = new_file.id
 
+    # Парсинг даты
     try:
         date_of_birth = _parse_date_yyyy_mm_dd(date_str)
     except:
         return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
 
+    # 1. Создаем пользователя
     user = User(
         name=name,
         email=email,
@@ -1951,12 +1959,26 @@ def api_register_google():
         avatar_file_id=avatar_file_id
     )
     db.session.add(user)
-    db.session.commit()
+    db.session.flush()  # Получаем user.id
 
     if avatar_file_id:
         new_file.user_id = user.id
-        db.session.commit()
 
+    # 2. Создаем запись анализа с РОСТОМ
+    if height:
+        try:
+            height_val = float(height)
+            # Создаем первую запись анализа, чтобы рост сразу отобразился в профиле
+            analysis = BodyAnalysis(
+                user_id=user.id,
+                height=height_val,
+                date=datetime.utcnow()
+            )
+            db.session.add(analysis)
+        except:
+            pass  # Если рост не число, игнорируем
+
+    db.session.commit()
     session['user_id'] = user.id
 
     track_event('signup_completed', user.id, {"method": "google", "sex": sex})
@@ -1966,7 +1988,9 @@ def api_register_google():
         "user": {
             "id": user.id,
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            # Возвращаем дату строкой, чтобы Flutter мог её распарсить
+            "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None
         }
     }), 201
 
