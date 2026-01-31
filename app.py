@@ -1273,6 +1273,8 @@ def instructions_page():
 # Убедись, что у тебя есть:
 # from sqlalchemy import func
 # from flask import url_for
+@# lib/backend/app.py
+
 @app.route('/api/app/profile_data')
 @login_required
 def app_profile_data():
@@ -1345,7 +1347,7 @@ def app_profile_data():
         m_data = meals_detailed_map.get(d_str, {})
         a_data = activity_detailed_map.get(d_str, {})
 
-        # Расчет прогресса для колец (как раньше)
+        # Расчет прогресса для колец
         meal_progress = min(1.0, m_data.get("count", 0) * 0.25)
 
         steps = a_data.get("steps", 0)
@@ -1368,7 +1370,6 @@ def app_profile_data():
         }
 
     # --- СБОР ДАННЫХ ПОЛЬЗОВАТЕЛЯ ---
-    # Мы используем .get(), чтобы не было ошибок, если в базе null
     show_popup = bool(getattr(user, 'show_welcome_popup', False))
 
     # Получаем статус последней заявки на доставку (если есть)
@@ -1386,11 +1387,10 @@ def app_profile_data():
         "current_streak": getattr(user, "current_streak", 0),  # Это ОБЩИЙ стрик
         "streak_nutrition": getattr(user, "streak_nutrition", 0),
         "streak_activity": getattr(user, "streak_activity", 0),
-        "calendar_history": calendar_history,  # <--- НОВОЕ ПОЛЕ
+        "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
         "delivery_status": delivery_status
-        # <--- ДОБАВЛЕНО: статус доставки (pending, warehouse, in_transit, delivered)
     }
 
     # --- 3. Данные о диете ---
@@ -1413,8 +1413,9 @@ def app_profile_data():
         except Exception:
             diet_data = None  # Ошибка парсинга JSON
 
-    # --- 4. Данные о прогрессе ---
+    # --- 4. Данные о прогрессе (BodyAnalysis) ---
     latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+
     if latest_analysis:
         calculated_fat_percentage = 0.0
         try:
@@ -1424,7 +1425,7 @@ def app_profile_data():
             pass
 
         latest_analysis_data = {
-            'timestamp': latest_analysis.timestamp.isoformat() if latest_analysis.timestamp else None,  # <--- ДОБАВЛЕНО
+            'timestamp': latest_analysis.timestamp.isoformat() if latest_analysis.timestamp else None,
             'height': latest_analysis.height,
             'weight_kg': latest_analysis.weight,
             'muscle_mass_kg': latest_analysis.muscle_mass,
@@ -1441,23 +1442,20 @@ def app_profile_data():
             'fat_free_body_weight': latest_analysis.fat_free_body_weight
         }
 
-    initial_analysis = db.session.get(BodyAnalysis,
-                                      user.initial_body_analysis_id) if user.initial_body_analysis_id else None
+    # Логика расчета прогресса жира (зависит от BodyAnalysis, может быть пустым)
+    initial_analysis = db.session.get(BodyAnalysis, user.initial_body_analysis_id) if user.initial_body_analysis_id else None
 
-    # (Логика расчета прогресса)
     if initial_analysis and latest_analysis and latest_analysis.fat_mass and user.fat_mass_goal and initial_analysis.fat_mass is not None and user.fat_mass_goal is not None and initial_analysis.fat_mass > user.fat_mass_goal:
         try:
             initial_fat_mass = float(initial_analysis.fat_mass)
-            # current_fat_mass берем пока из последнего анализа, но ниже скорректируем его прогнозом
             current_fat_mass = latest_analysis.fat_mass
             goal_fat_mass = user.fat_mass_goal
 
-            # --- НАЧАЛО ВНЕДРЕНИЯ ПРОГНОЗА (из web-версии) ---
+            # --- ПРОГНОЗ ПОТЕРИ ЖИРА ---
             KCAL_PER_KG_FAT = 7700
             start_datetime = latest_analysis.timestamp
             today_date = date.today()
 
-            # 1. Забираем логи еды и активности ПОСЛЕ последнего замера
             meal_logs_since = MealLog.query.filter(
                 MealLog.user_id == user.id,
                 MealLog.date >= start_datetime.date()
@@ -1468,7 +1466,6 @@ def app_profile_data():
                 Activity.date >= start_datetime.date()
             ).all()
 
-            # 2. Группируем в словари для быстрого доступа
             meals_map = {}
             for log in meal_logs_since:
                 meals_map.setdefault(log.date, 0)
@@ -1486,7 +1483,6 @@ def app_profile_data():
                     consumed = meals_map.get(current_day, 0)
                     burned_active = activity_map.get(current_day, 0)
 
-                    # В день замера: учитываем только то, что съедено ПОСЛЕ времени замера
                     if i == 0:
                         calories_before_analysis = db.session.query(func.sum(MealLog.calories)).filter(
                             MealLog.user_id == user.id,
@@ -1494,23 +1490,17 @@ def app_profile_data():
                             MealLog.created_at < start_datetime
                         ).scalar() or 0
                         consumed -= calories_before_analysis
-                        # Активность в день замера игнорируем для "безопасности" (как в веб-версии)
                         burned_active = 0
 
                     daily_deficit = (metabolism + burned_active) - consumed
                     if daily_deficit > 0:
                         total_accumulated_deficit += daily_deficit
 
-            # 3. Рассчитываем, сколько жира "должно было" уйти
             estimated_burned_kg = total_accumulated_deficit / KCAL_PER_KG_FAT
-
-            # 4. Обновляем текущий вес жира (прогноз)
             current_fat_mass = current_fat_mass - estimated_burned_kg
 
-            # --- КОНЕЦ ВНЕДРЕНИЯ ---
-
             total_fat_to_lose_kg = initial_fat_mass - goal_fat_mass
-            fat_lost_so_far_kg = initial_fat_mass - current_fat_mass  # Используем обновленный current
+            fat_lost_so_far_kg = initial_fat_mass - current_fat_mass
 
             percentage = 0
             if total_fat_to_lose_kg > 0:
@@ -1522,12 +1512,13 @@ def app_profile_data():
                 'total_to_lose_kg': total_fat_to_lose_kg,
                 'initial_kg': initial_fat_mass,
                 'goal_kg': goal_fat_mass,
-                'current_kg': current_fat_mass  # Прогнозируемое значение
+                'current_kg': current_fat_mass
             }
         except Exception as e:
             print(f"Error calculating fat loss: {e}")
             fat_loss_progress_data = None
 
+        # Чекпоинты прогресса
         all_analyses_for_progress_data = []
         if user.initial_body_analysis_id:
             initial_analysis_for_chart = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
@@ -1559,38 +1550,58 @@ def app_profile_data():
                     "percentage": min(100, max(0, percentage_at_point))
                 })
 
-        # Расчет прогресса веса (линейный от точки А до точки Б)
-        if user.initial_body_analysis_id and user.weight_goal and latest_analysis:
-            initial_record = db.session.get(BodyAnalysis, user.initial_body_analysis_id)
-            if initial_record:
-                start_w = initial_record.weight
-                curr_w = latest_analysis.weight
-                goal_w = user.weight_goal
+    # --- 5. РАСЧЕТ ПРОГРЕССА ВЕСА (НОВАЯ ЛОГИКА: WeightLog + user.start_weight) ---
+    # Мы больше не зависим от initial_body_analysis_id для веса
+    if user.start_weight and user.weight_goal:
+        start_w = user.start_weight
+        goal_w = user.weight_goal
 
-                total_dist = abs(start_w - goal_w)
-                done_dist = abs(start_w - curr_w)
+        # Получаем последний лог веса из таблицы WeightLog
+        last_log = WeightLog.query.filter_by(user_id=user.id)\
+            .order_by(WeightLog.date.desc(), WeightLog.created_at.desc()).first()
 
-                pct = (done_dist / total_dist * 100) if total_dist > 0 else 0
+        # Если логов нет (только зарегистрировался), используем стартовый вес
+        curr_w = last_log.weight if last_log else start_w
 
-                weight_progress = {
-                    "start_weight": start_w,
-                    "current_weight": curr_w,
-                    "goal_weight": goal_w,
-                    "percent": min(100, max(0, pct))
-                }
+        total_dist = abs(start_w - goal_w)
+        done_dist = abs(start_w - curr_w)
+
+        pct = 0
+        if total_dist > 0.1:
+            # Проверяем, движемся ли мы к цели
+            is_weight_loss = start_w > goal_w
+
+            if is_weight_loss:
+                 # Худеем
+                 if curr_w <= start_w:
+                     pct = (done_dist / total_dist) * 100
+                 else:
+                     pct = 0 # Вес вырос, прогресс 0
+            else:
+                 # Набираем
+                 if curr_w >= start_w:
+                     pct = (done_dist / total_dist) * 100
+                 else:
+                     pct = 0 # Вес упал, прогресс 0
+
+        weight_progress = {
+            "start_weight": start_w,
+            "current_weight": curr_w,
+            "goal_weight": goal_w,
+            "percent": min(100, max(0, pct))
+        }
 
     return jsonify({
             "ok": True,
             "data": {
                 "user": user_data,
                 "diet": diet_data,
-                "weight_progress": weight_progress,  # Новый объект прогресса
+                "weight_progress": weight_progress,
                 "fat_loss_progress": fat_loss_progress_data,
                 "progress_checkpoints": progress_checkpoints,
                 "latest_analysis": latest_analysis_data
             }
         })
-
 
 @app.route('/api/app/update_step_goal', methods=['POST'])
 @login_required
@@ -2294,36 +2305,67 @@ def api_analytics_track():
 
 # lib/backend/app.py
 
+# lib/backend/app.py
+
 @app.route('/api/onboarding/complete_flow', methods=['POST'])
 @login_required
 def complete_onboarding_flow():
     """
-    НОВЫЙ ФЛОУ (ЭТАП 2): Пользователь нажал "Завершить" на пейволле.
-    Очищаем историю "пристрелочных" замеров в два этапа, чтобы не нарушить целостность БД.
+    НОВЫЙ ФЛОУ (ЭТАП 2): Пользователь нажал "Завершить".
+    1. Сохраняем текущий вес из анализа в WeightLog (как первую точку).
+    2. Фиксируем user.start_weight (Точка А).
+    3. Очищаем "пристрелочные" BodyAnalysis.
     """
     user = get_current_user()
     try:
-        # 1. Устанавливаем флаги завершения
+        # --- 1. ПЕРЕНОС ДАННЫХ В WEIGHTLOG ПЕРЕД ОЧИСТКОЙ ---
+
+        # Пытаемся найти анализ, который был сделан во время онбординга
+        latest_onboarding_analysis = BodyAnalysis.query.filter_by(user_id=user.id) \
+            .order_by(BodyAnalysis.timestamp.desc()).first()
+
+        if latest_onboarding_analysis and latest_onboarding_analysis.weight:
+            w_val = latest_onboarding_analysis.weight
+
+            # А. Фиксируем Точку А в профиле, если еще не стоит
+            if not user.start_weight:
+                user.start_weight = w_val
+
+            # Б. Создаем запись в WeightLog (История веса)
+            # Проверяем, нет ли уже записи за сегодня, чтобы не дублировать
+            today = date.today()
+            existing_log = WeightLog.query.filter_by(user_id=user.id, date=today).first()
+
+            if not existing_log:
+                new_log = WeightLog(
+                    user_id=user.id,
+                    weight=w_val,
+                    date=today
+                )
+                db.session.add(new_log)
+
+        # Сохраняем WeightLog и user.start_weight перед удалением анализов
+        db.session.commit()
+
+        # --- 2. СТАНДАРТНОЕ ЗАВЕРШЕНИЕ ---
         user.onboarding_v2_complete = True
         user.onboarding_complete = True
 
-        # 2. ВАЖНО: Сначала "отвязываем" точку А от пользователя
-        # Если этого не сделать, база данных запретит удалять запись, на которую есть ссылка
+        # Сбрасываем ссылку на BodyAnalysis (так как мы его сейчас удалим)
         user.initial_body_analysis_id = None
         db.session.add(user)
-        db.session.commit()  # <--- Фиксируем отвязку, теперь ссылки нет
+        db.session.commit()
 
-        # 3. Теперь безопасно удаляем ВСЕ "грязные" замеры, созданные при регистрации
-        # (включая тот, что был initial_body_analysis_id)
+        # --- 3. ОЧИСТКА ВРЕМЕННЫХ АНАЛИЗОВ ---
+        # Теперь безопасно удаляем, так как вес сохранен в WeightLog
         BodyAnalysis.query.filter_by(user_id=user.id).delete()
-        db.session.commit()  # <--- Фиксируем удаление
+        db.session.commit()
 
         track_event('onboarding_finished', user.id)
         return jsonify({"success": True})
 
     except Exception as e:
         db.session.rollback()
-        # Логируем ошибку, чтобы видеть в консоли, если что-то пойдет не так
         print(f"Error in complete_onboarding_flow: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
