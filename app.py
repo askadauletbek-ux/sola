@@ -2289,21 +2289,43 @@ def api_analytics_track():
 
     return jsonify({"ok": True})
 
+
+# lib/backend/app.py
+
 @app.route('/api/onboarding/complete_flow', methods=['POST'])
 @login_required
 def complete_onboarding_flow():
     """
     НОВЫЙ ФЛОУ (ЭТАП 2): Пользователь нажал "Завершить" на пейволле.
-    Используем флаг 'onboarding_v2_complete'
+    Используем флаг 'onboarding_v2_complete'.
+    ОЧИЩАЕМ историю BodyAnalysis, чтобы график был чистым.
     """
     user = get_current_user()
     try:
         user.onboarding_v2_complete = True
         # (Также устанавливаем старый флаг для совместимости с KiloShell)
         user.onboarding_complete = True
+
+        # === ОЧИСТКА ИСТОРИИ ПОСЛЕ ВИЗУАЛИЗАЦИИ ===
+        # Удаляем все записи BodyAnalysis, созданные в процессе онбординга.
+        # Это нужно, чтобы "пристрелочные" данные для AI-генерации не портили
+        # реальную статистику в профиле.
+
+        # 1. Удаляем записи
+        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # 2. Сбрасываем ссылку на "Точку А", так как сама запись удалена
+        user.initial_body_analysis_id = None
+
+        # Примечание: Таблицу WeightLog мы НЕ трогаем.
+        # Если пользователь хочет сохранить вес как число — оно останется
+        # (если вы его сохраняли отдельно в WeightLog).
+
         db.session.commit()
+
         track_event('onboarding_finished', user.id)
         return jsonify({"success": True})
+
     except Exception as e:
         db.session.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
