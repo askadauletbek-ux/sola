@@ -151,15 +151,14 @@ def handle_chat():
     chat_history = chat_history[-15:]  # Держим контекст компактным
 
     # 1. КЛАССИФИКАЦИЯ ИНТЕНТА
-    # Мы используем классификатор, чтобы понять, что нужно пользователю
     # Генерация = "Что мне поесть?", "Составь рацион", "Хочу новую диету"
-    # Диета = "Убери рыбу", "Что у меня на ужин?" (работа с ТЕКУЩЕЙ)
+    # Диета = "Убери рыбу", "Что у меня на ужин?", "Не нравится, хочу другое" (работа с ТЕКУЩЕЙ)
     # Показатели = "Как мой вес?", "Проанализируй прогресс"
 
     CLASSIFICATION_PROMPT = """
     Определи намерение пользователя одним словом:
-    1. 'Генерация' - если просит составить НОВЫЙ рацион, спрашивает "что мне есть сегодня", "сделай план питания".
-    2. 'Диета' - если хочет изменить ТЕКУЩУЮ диету ("замени ужин", "убери лук") или спрашивает о ней ("что там на обед?").
+    1. 'Генерация' - если просит составить НОВЫЙ рацион с нуля, спрашивает "что мне есть сегодня".
+    2. 'Диета' - если хочет изменить ТЕКУЩУЮ диету ("замени ужин", "убери лук", "не нравится", "хочу другое") или спрашивает о ней.
     3. 'Показатели' - если спрашивает про вес, жир, прогресс, анализ тела.
     4. 'Общее' - любой другой разговор.
     """
@@ -175,11 +174,10 @@ def handle_chat():
     user_gender = user_context['profile']['gender']  # 'male' / 'female'
 
     # =================================================================================
-    # СЦЕНАРИЙ 1: ГЕНЕРАЦИЯ ДИЕТЫ (УМНАЯ ЛОГИКА)
+    # СЦЕНАРИЙ 1: ГЕНЕРАЦИЯ ДИЕТЫ (С НУЛЯ)
     # =================================================================================
     if "Генерация" in classifier_text or "Generat" in classifier_text:
 
-        # Системный промпт для генератора
         gen_system_prompt = f"""
         Ты — Kilo, элитный персональный нутрициолог.
         Твоя задача: Составить идеальный рацион на сегодня.
@@ -189,21 +187,18 @@ def handle_chat():
         Пол: {user_gender}
         Данные: {json.dumps(user_context, ensure_ascii=False)}
 
-        ПРАВИЛА ОБЩЕНИЯ (ВАЖНО):
-        1. Если пол мужской: Общайся как тренер. Используй слова: "потенциал", "результат", "атлет". Стиль уверенный.
-           Пример: "Аскар, отличная форма! У тебя хороший потенциал, давай добьем его этим рационом."
-        2. Если пол женский: Общайся заботливо и вдохновляюще. Используй слова: "умница", "прекрасные показатели", "сияешь".
-           Пример: "Анжелика, ты показала классные результаты! Твой организм отлично реагирует, вот меню для тебя."
+        ПРАВИЛА ОБЩЕНИЯ:
+        1. Если пол 'male': Стиль тренерский, уверенный. ("потенциал", "дисциплина", "атлет").
+        2. Если пол 'female': Стиль заботливый, вдохновляющий. ("умница", "отличные показатели", "сияешь").
 
-        ЛОГИКА РАБОТЫ:
-        1. Проверь поле 'goal_weight' (целевой вес) и 'activity' в данных.
-        2. ЕСЛИ ЦЕЛЬ НЕ ПОНЯТНА или не задана в профиле -> НЕ генерируй меню. Спроси пользователя в поле 'chat_message', какая у него цель (похудение, набор, поддержание). Поле 'diet_plan' верни null.
-        3. ЕСЛИ ЦЕЛЬ ЕСТЬ -> Сгенерируй рацион. Заполни 'chat_message' мотивирующим текстом с кратким обзором меню, а 'diet_plan' полным JSON.
+        ЛОГИКА:
+        1. Если ЦЕЛЬ (goal_weight/goal_fat) НЕ ЯСНА -> Спроси пользователя в поле 'chat_message'. 'diet_plan' = null.
+        2. Если ЦЕЛЬ ЕСТЬ -> Генерируй рацион. Заполни 'chat_message' текстом, а 'diet_plan' полным JSON.
 
         ФОРМАТ ОТВЕТА (JSON):
         {{
-            "chat_message": "Текст ответа для пользователя...",
-            "diet_plan": {{ ...структура диеты (breakfast, lunch, dinner, snack, total_kcal, macros)... }} ИЛИ null
+            "chat_message": "Текст ответа...",
+            "diet_plan": {{ "breakfast": [...], "lunch": [...], "dinner": [...], "snack": [...], "total_kcal": 0, "protein": 0, "fat": 0, "carbs": 0 }} ИЛИ null
         }}
         """
 
@@ -245,59 +240,98 @@ def handle_chat():
 
             except Exception as e:
                 logger.error(f"Diet Gen Error: {e}")
-                return jsonify(
-                    {"role": "ai", "content": "Что-то пошло не так при составлении плана. Попробуйте еще раз."}), 200
+                return jsonify({"role": "ai", "content": "Что-то пошло не так. Попробуйте еще раз."}), 200
 
     # =================================================================================
-    # СЦЕНАРИЙ 2: РАБОТА С ТЕКУЩЕЙ ДИЕТОЙ (ИЗМЕНЕНИЕ) - Оставляем как было
+    # СЦЕНАРИЙ 2: РАБОТА С ТЕКУЩЕЙ ДИЕТОЙ (ВОПРОСЫ И ИЗМЕНЕНИЯ) - ИСПРАВЛЕНО
     # =================================================================================
     elif "Диета" in classifier_text:
         current_diet = Diet.query.filter_by(user_id=user_id).order_by(Diet.date.desc()).first()
         if not current_diet:
-            return jsonify(
-                {"role": "ai", "content": "У вас нет активной диеты. Напишите 'Составь рацион', чтобы начать!"}), 200
+            return jsonify({"role": "ai",
+                            "content": "У вас еще нет активной диеты. Напишите 'Составь рацион', чтобы начать!"}), 200
 
         diet_json = _format_diet_summary(current_diet)
 
-        # Роутер: Вопрос или Изменение?
-        router_prompt = f"""
-        Текущая диета: {diet_json}
-        Запрос: "{user_message}"
-        Если пользователь хочет ИЗМЕНИТЬ (заменить, убрать, добавить) -> верни обновленный JSON диеты.
-        Если просто спрашивает -> верни строку "TEXT_ONLY".
+        # Строгий системный промпт для модификации
+        mod_system_prompt = f"""
+        Ты — Kilo, диетолог. Работаешь с текущим рационом пользователя (JSON):
+        {diet_json}
+
+        ТВОЯ ЗАДАЧА:
+        Проанализировать запрос пользователя "{user_message}" и вернуть JSON СТРОГО одного из двух типов:
+
+        ТИП 1: Пользователь просто задает вопрос (например: "что на ужин?", "сколько там белка?").
+        Верни:
+        {{
+            "action": "answer",
+            "text": "Твой текстовый ответ на вопрос..."
+        }}
+
+        ТИП 2: Пользователь хочет изменений ("не нравится", "хочу другое", "убери рыбу", "замени ужин").
+        Верни:
+        {{
+            "action": "update",
+            "text": "Короткий комментарий (например: 'Понял, полностью заменил меню на новое.')",
+            "diet_plan": {{ ...полностью обновленная структура диеты (breakfast, lunch, dinner, snack, total_kcal, macros)... }}
+        }}
+
+        ВАЖНО: 
+        - Если пользователь пишет "не нравится" или "хочу другое" без уточнений — предложи ПОЛНОСТЬЮ НОВЫЕ БЛЮДА (весь рацион), подходящие под его калораж.
+        - Возвращай валидный JSON.
         """
-        router_resp = _call_openai([{"role": "user", "content": router_prompt}], temperature=0.3)
 
-        if "TEXT_ONLY" in router_resp:
-            # Просто ответ на вопрос
-            ans = _call_openai([
-                {"role": "system", "content": f"Ты диетолог. Вот диета: {diet_json}. Ответь кратко."},
-                {"role": "user", "content": user_message}
-            ])
-            chat_history.append({"role": "assistant", "content": ans})
-            session['chat_history'] = chat_history
-            return jsonify({"role": "ai", "content": ans}), 200
-        else:
-            # Пришел JSON с изменениями
+        messages = [{"role": "system", "content": mod_system_prompt}]
+
+        # json_mode=True ГАРАНТИРУЕТ, что не будет простого текста
+        response_json_str = _call_openai(messages, temperature=0.7, max_tokens=2000, json_mode=True)
+
+        if response_json_str:
             try:
-                new_data = json.loads(router_resp)
-                current_diet.breakfast = json.dumps(new_data.get('breakfast', []), ensure_ascii=False)
-                current_diet.lunch = json.dumps(new_data.get('lunch', []), ensure_ascii=False)
-                current_diet.dinner = json.dumps(new_data.get('dinner', []), ensure_ascii=False)
-                current_diet.snack = json.dumps(new_data.get('snack', []), ensure_ascii=False)
-                current_diet.total_kcal = new_data.get('total_kcal')
-                # (Остальные поля по желанию)
-                db.session.commit()
+                resp_data = json.loads(response_json_str)
+                action = resp_data.get("action")
+                ai_text = resp_data.get("text", "Готово.")
 
-                msg = "Я обновил ваш рацион согласно пожеланиям! ✅"
-                chat_history.append({"role": "assistant", "content": msg})
-                session['chat_history'] = chat_history
-                return jsonify({"role": "ai", "content": msg}), 200
-            except:
-                return jsonify({"role": "ai", "content": "Не удалось изменить диету. Попробуйте еще раз."}), 200
+                if action == "answer":
+                    # Просто ответ
+                    chat_history.append({"role": "assistant", "content": ai_text})
+                    session['chat_history'] = chat_history
+                    return jsonify({"role": "ai", "content": ai_text}), 200
+
+                elif action == "update":
+                    # Обновляем базу
+                    new_plan = resp_data.get("diet_plan")
+                    if new_plan:
+                        current_diet.breakfast = json.dumps(new_plan.get('breakfast', []), ensure_ascii=False)
+                        current_diet.lunch = json.dumps(new_plan.get('lunch', []), ensure_ascii=False)
+                        current_diet.dinner = json.dumps(new_plan.get('dinner', []), ensure_ascii=False)
+                        current_diet.snack = json.dumps(new_plan.get('snack', []), ensure_ascii=False)
+                        current_diet.total_kcal = new_plan.get('total_kcal')
+                        current_diet.protein = new_plan.get('protein')
+                        current_diet.fat = new_plan.get('fat')
+                        current_diet.carbs = new_plan.get('carbs')
+
+                        db.session.commit()
+                        logger.info(f"Diet updated via chat for user {user_id}")
+
+                        chat_history.append({"role": "assistant", "content": ai_text})
+                        session['chat_history'] = chat_history
+                        return jsonify({"role": "ai", "content": ai_text}), 200
+                    else:
+                        return jsonify(
+                            {"role": "ai", "content": "Не удалось перестроить план. Попробуйте уточнить запрос."}), 200
+
+                else:
+                    return jsonify({"role": "ai", "content": ai_text}), 200
+
+            except Exception as e:
+                logger.error(f"Diet Modify JSON Error: {e}")
+                return jsonify({"role": "ai", "content": "Произошла ошибка при изменении. Попробуйте еще раз."}), 200
+        else:
+            return jsonify({"role": "ai", "content": "ИИ не ответил. Попробуйте позже."}), 200
 
     # =================================================================================
-    # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ - Оставляем как было
+    # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ (АНАЛИЗ)
     # =================================================================================
     elif "Показатели" in classifier_text:
         current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
@@ -314,10 +348,9 @@ def handle_chat():
         return jsonify({"role": "ai", "content": reply}), 200
 
     # =================================================================================
-    # СЦЕНАРИЙ 4: ОБЩИЙ ЧАТ (С ПАМЯТЬЮ КОНТЕКСТА)
+    # СЦЕНАРИЙ 4: ОБЩИЙ ЧАТ
     # =================================================================================
     else:
-        # В общий чат тоже передаем контекст, чтобы он "помнил всё"
         general_prompt = f"""
         Ты — Kilo, помощник Kilogr.app.
         Пользователь: {user_name}, Пол: {user_gender}.
