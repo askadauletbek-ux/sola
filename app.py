@@ -2292,42 +2292,39 @@ def api_analytics_track():
 
 # lib/backend/app.py
 
+# lib/backend/app.py
+
 @app.route('/api/onboarding/complete_flow', methods=['POST'])
 @login_required
 def complete_onboarding_flow():
     """
     НОВЫЙ ФЛОУ (ЭТАП 2): Пользователь нажал "Завершить" на пейволле.
-    Используем флаг 'onboarding_v2_complete'.
-    ОЧИЩАЕМ историю BodyAnalysis, чтобы график был чистым.
+    Очищаем историю "пристрелочных" замеров в два этапа, чтобы не нарушить целостность БД.
     """
     user = get_current_user()
     try:
+        # 1. Устанавливаем флаги завершения
         user.onboarding_v2_complete = True
-        # (Также устанавливаем старый флаг для совместимости с KiloShell)
         user.onboarding_complete = True
 
-        # === ОЧИСТКА ИСТОРИИ ПОСЛЕ ВИЗУАЛИЗАЦИИ ===
-        # Удаляем все записи BodyAnalysis, созданные в процессе онбординга.
-        # Это нужно, чтобы "пристрелочные" данные для AI-генерации не портили
-        # реальную статистику в профиле.
-
-        # 1. Удаляем записи
-        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # 2. Сбрасываем ссылку на "Точку А", так как сама запись удалена
+        # 2. ВАЖНО: Сначала "отвязываем" точку А от пользователя
+        # Если этого не сделать, база данных запретит удалять запись, на которую есть ссылка
         user.initial_body_analysis_id = None
+        db.session.add(user)
+        db.session.commit()  # <--- Фиксируем отвязку, теперь ссылки нет
 
-        # Примечание: Таблицу WeightLog мы НЕ трогаем.
-        # Если пользователь хочет сохранить вес как число — оно останется
-        # (если вы его сохраняли отдельно в WeightLog).
-
-        db.session.commit()
+        # 3. Теперь безопасно удаляем ВСЕ "грязные" замеры, созданные при регистрации
+        # (включая тот, что был initial_body_analysis_id)
+        BodyAnalysis.query.filter_by(user_id=user.id).delete()
+        db.session.commit()  # <--- Фиксируем удаление
 
         track_event('onboarding_finished', user.id)
         return jsonify({"success": True})
 
     except Exception as e:
         db.session.rollback()
+        # Логируем ошибку, чтобы видеть в консоли, если что-то пойдет не так
+        print(f"Error in complete_onboarding_flow: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 # --- НАЧАЛО: НОВЫЙ ЭНДПОИНТ ДЛЯ FLUTTER LOGIN ---
