@@ -1857,39 +1857,25 @@ def api_google_login():
         return jsonify({"ok": False, "error": "TOKEN_MISSING"}), 400
 
     try:
-        # ВАЖНО: Замените CLIENT_ID на ваш реальный Web Client ID из Firebase/Google Cloud Console
-        # Можно вынести в .env
         GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-
-        # Проверяем подлинность токена
         id_info = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
 
-        # Получаем данные пользователя
         email = id_info.get('email')
         name = id_info.get('name')
-        picture = id_info.get('picture')
 
         if not email:
             return jsonify({"ok": False, "error": "EMAIL_NOT_PROVIDED_BY_GOOGLE"}), 400
 
-        # Ищем пользователя или создаем нового
         user = User.query.filter(func.lower(User.email) == email.casefold()).first()
 
         if not user:
-            # Авто-регистрация
-            # Генерируем случайный пароль, так как вход через Google
-            import secrets
-            random_pw = secrets.token_urlsafe(16)
-            hashed_pw = bcrypt.generate_password_hash(random_pw).decode('utf-8')
-
-            user = User(
-                email=email,
-                name=name or "Google User",
-                password=hashed_pw,
-                # Можно сохранить аватарку из picture, если нужно
-            )
-            db.session.add(user)
-            db.session.commit()
+            # Пользователь не найден. Возвращаем 404 и данные для онбординга.
+            return jsonify({
+                "ok": False,
+                "error": "USER_NOT_FOUND",
+                "google_email": email,
+                "google_name": name
+            }), 404
 
         # Логиним пользователя (создаем сессию)
         session['user_id'] = user.id
@@ -1906,10 +1892,83 @@ def api_google_login():
         }), 200
 
     except ValueError as e:
-        # Неверный токен
         return jsonify({"ok": False, "error": f"INVALID_TOKEN: {str(e)}"}), 401
     except Exception as e:
         return jsonify({"ok": False, "error": f"SERVER_ERROR: {str(e)}"}), 500
+
+
+@app.route('/api/register_google', methods=['POST'])
+def api_register_google():
+    token = request.form.get('id_token')
+
+    try:
+        GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+        id_info = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
+        email = id_info.get('email')
+    except Exception as e:
+        return jsonify({"ok": False, "errors": ["INVALID_GOOGLE_TOKEN"]}), 400
+
+    name = request.form.get('name', '').strip()
+    date_str = request.form.get('date_of_birth', '').strip()
+    sex = request.form.get('sex', 'male').strip().lower()
+    face_consent = request.form.get('face_consent', 'false').lower() == 'true'
+    file = request.files.get('avatar')
+
+    # Генерируем случайный пароль для технической совместимости
+    import secrets
+    random_pw = secrets.token_urlsafe(16)
+    hashed_pw = bcrypt.generate_password_hash(random_pw).decode('utf-8')
+
+    avatar_file_id = None
+    if file and file.filename:
+        filename = secure_filename(file.filename)
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext in {'jpg', 'jpeg', 'png', 'webp'}:
+            unique_filename = f"avatar_reg_{uuid.uuid4().hex}.{ext}"
+            file_data = file.read()
+            new_file = UploadedFile(
+                filename=unique_filename,
+                content_type=file.mimetype,
+                data=file_data,
+                size=len(file_data)
+            )
+            db.session.add(new_file)
+            db.session.flush()
+            avatar_file_id = new_file.id
+
+    try:
+        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+    except:
+        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+
+    user = User(
+        name=name,
+        email=email,
+        password=hashed_pw,
+        date_of_birth=date_of_birth,
+        sex=sex,
+        face_consent=face_consent,
+        avatar_file_id=avatar_file_id
+    )
+    db.session.add(user)
+    db.session.commit()
+
+    if avatar_file_id:
+        new_file.user_id = user.id
+        db.session.commit()
+
+    session['user_id'] = user.id
+
+    track_event('signup_completed', user.id, {"method": "google", "sex": sex})
+
+    return jsonify({
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email
+        }
+    }), 201
 
 @app.post('/api/logout')
 def api_logout():
