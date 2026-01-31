@@ -3206,14 +3206,27 @@ def confirm_analysis():
                                             remaining = new_analysis.fat_mass - user.fat_mass_goal
 
                                             # Создаем пост в ленту
+                                            # Создаем пост в ленту
                                             feed_content = f"Сбросил {total_lost:.1f}кг жира! До цели осталось {remaining:.1f}кг. Идем по графику! 🔥"
-                                            new_post = Post(
-                                                user_id=user.id,
-                                                content=feed_content,
-                                                post_type='achievement',
-                                                is_ai_generated=True
-                                            )
-                                            db.session.add(new_post)
+
+                                            # Определяем ID группы (своя или куда вступил)
+                                            target_group_id = None
+                                            if user.own_group:
+                                                target_group_id = user.own_group.id
+                                            else:
+                                                membership = GroupMember.query.filter_by(user_id=user.id).first()
+                                                if membership:
+                                                    target_group_id = membership.group_id
+
+                                            if target_group_id:
+                                                new_post = GroupMessage(
+                                                    group_id=target_group_id,
+                                                    user_id=user.id,
+                                                    text=feed_content,
+                                                    type='system',  # Используем system для выделения в ленте
+                                                    timestamp=datetime.now(UTC)
+                                                )
+                                                db.session.add(new_post)
                                     except Exception as feed_err:
                                         print(f"Feed post error: {feed_err}")
 
