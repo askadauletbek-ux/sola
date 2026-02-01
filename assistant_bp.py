@@ -27,7 +27,10 @@ assistant_bp = Blueprint('assistant', __name__, url_prefix='/api')
 
 # Импорт моделей
 try:
+    # Добавляем MealLog, если нужно для проверок, но пока хватит этих
     from models import User, Diet, BodyAnalysis, Activity, db
+    from notification_service import send_user_notification # Импорт для уведомлений
+    from amplitude import BaseEvent # Для аналитики (если amplitude инициализирована глобально, передадим из app, но здесь импортируем класс)
 except Exception as _e:
     User = None
     Diet = None
@@ -40,6 +43,149 @@ except Exception as _e:
 # ------------------------------------------------------------------
 # Хелперы
 # ------------------------------------------------------------------
+def generate_diet_for_user(user_id, amplitude_instance=None):
+    """
+    Генерирует диету + обоснование, сохраняет в БД и добавляет в контекст чата.
+    """
+    user = User.query.get(user_id)
+    if not user:
+        return {"error": "User not found", "code": 404}
+
+    # 1. Сбор данных
+    context = get_full_user_context(user_id)
+    profile = context['profile']
+    metrics = context['metrics']
+
+    # Определяем параметры для промпта
+    name = profile['name'] or "Пользователь"
+    current_weight = metrics['weight'] or "неизвестен"
+    goal_weight = profile['goal_weight'] or "не указан"
+    bmr = metrics['metabolism'] or 1600
+    # Простая эвристика для TDEE (расход калорий)
+    activity_factor = 1.2  # Sedentary
+    if context['activity']['avg_weekly_steps'] > 10000:
+        activity_factor = 1.55
+    elif context['activity']['avg_weekly_steps'] > 5000:
+        activity_factor = 1.375
+
+    tdee = int(bmr * activity_factor)
+
+    # Формируем цель для ИИ
+    goal_instruction = "поддержание веса"
+    if user.fat_mass_goal:
+        goal_instruction = "потеря жира (дефицит калорий, высокий белок)"
+    elif user.muscle_mass_goal:
+        goal_instruction = "набор мышечной массы (профицит калорий)"
+
+    # 2. Промпт
+    prompt = f"""
+    Роль: Ты — профессиональный спортивный диетолог Kilo.
+    Клиент: {name}.
+    Параметры: Вес {current_weight}кг, BMR {bmr}, Расход (TDEE) ~{tdee} ккал.
+    Цель: {goal_instruction}. Желаемый вес: {goal_weight}кг.
+
+    ЗАДАЧА:
+    1. Рассчитай целевые КБЖУ для этой цели.
+    2. Составь рацион на 1 день (завтрак, обед, ужин, перекус).
+    3. Напиши ОБОСНОВАНИЕ для клиента (обращайся по имени), почему ты выбрал именно такие цифры. 
+       Пример: "{name}, я составил рацион на 1800 ккал. Это дефицит 15% от твоей нормы, что обеспечит сжигание жира. Белка 160г, чтобы сохранить мышцы..."
+
+    Верни JSON строго по формату:
+    {{
+        "justification": "Текст обоснования...",
+        "diet_plan": {{
+            "breakfast": [{{"name": "...", "grams": 0, "kcal": 0, "recipe": "..."}}],
+            "lunch": [...],
+            "dinner": [...],
+            "snack": [...],
+            "total_kcal": 0,
+            "protein": 0,
+            "fat": 0,
+            "carbs": 0
+        }}
+    }}
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Ты диетолог. Отвечай только валидным JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=DIET_TEMPERATURE,
+            max_tokens=2000,
+            response_format={"type": "json_object"}
+        )
+
+        content = response.choices[0].message.content.strip()
+        data = json.loads(content)
+
+        diet_plan = data.get("diet_plan")
+        justification = data.get("justification", f"Рацион составлен для цели: {goal_instruction}")
+
+        if not diet_plan:
+            return {"error": "AI generation failed", "code": 500}
+
+        # 3. Сохранение в БД
+        Diet.query.filter_by(user_id=user_id, date=date.today()).delete()
+
+        new_diet = Diet(
+            user_id=user_id,
+            date=date.today(),
+            breakfast=json.dumps(diet_plan.get('breakfast', []), ensure_ascii=False),
+            lunch=json.dumps(diet_plan.get('lunch', []), ensure_ascii=False),
+            dinner=json.dumps(diet_plan.get('dinner', []), ensure_ascii=False),
+            snack=json.dumps(diet_plan.get('snack', []), ensure_ascii=False),
+            total_kcal=diet_plan.get('total_kcal'),
+            protein=diet_plan.get('protein'),
+            fat=diet_plan.get('fat'),
+            carbs=diet_plan.get('carbs')
+        )
+        db.session.add(new_diet)
+        db.session.commit()
+
+        # 4. Обновление контекста чата (Session)
+        # Добавляем "системное" сообщение в историю, будто ассистент только что это сказал
+        # Это позволяет пользователю сразу спросить "А чем заменить обед?"
+        chat_history = session.get('chat_history', [])
+
+        # Сохраняем краткое саммари для контекста
+        diet_context_msg = {
+            "role": "assistant",
+            "content": f"{justification}\n(Сгенерирован рацион: {diet_plan.get('total_kcal')} ккал, БЖУ: {diet_plan.get('protein')}/{diet_plan.get('fat')}/{diet_plan.get('carbs')})"
+        }
+        chat_history.append(diet_context_msg)
+        session['chat_history'] = chat_history[-15:]  # Ограничиваем историю
+
+        # 5. Уведомление
+        send_user_notification(
+            user_id=user.id,
+            title="🍽️ Индивидуальный план готов!",
+            body=f"Калории: {diet_plan.get('total_kcal')}. {justification[:50]}...",
+            type='success',
+            data={"route": "/diet"}
+        )
+
+        # 6. Аналитика
+        if amplitude_instance:
+            try:
+                amplitude_instance.track(BaseEvent(
+                    event_type="Diet Generated AI",
+                    user_id=str(user.id),
+                    event_properties={
+                        "calories": diet_plan.get('total_kcal'),
+                        "goal": goal_instruction
+                    }
+                ))
+            except Exception as e:
+                print(f"Amplitude error: {e}")
+
+        return {"success": True, "justification": justification}
+
+    except Exception as e:
+        logger.exception("Error in generate_diet_for_user")
+        return {"error": str(e), "code": 500}
 
 def calculate_age(born):
     if not born: return "Не указан"
@@ -355,14 +501,14 @@ def handle_chat():
         else:
             return jsonify({"role": "ai", "content": "ИИ не ответил."}), 200
 
-    # =================================================================================
-    # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ
-    # =================================================================================
+        # =================================================================================
+        # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ
+        # =================================================================================
     elif "Показатели" in classifier_text:
-        current_ba = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+        # ИСПРАВЛЕНИЕ: используем user_id, так как объект user здесь не определен
+        current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
         if not current_ba:
             return jsonify({"role": "ai", "content": "Нет данных анализа тела. Загрузите фото с весов!"}), 200
-
         ba_sum = _format_body_summary(current_ba)
         reply = _call_openai([
             {"role": "system", "content": "Ты фитнес-аналитик. Дай совет."},

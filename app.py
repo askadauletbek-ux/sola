@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_ # <--- Добавьте это в импорты sqlalchemy
 import tempfile  # Добавить в импорты вверху файла
+from assistant_bp import assistant_bp, generate_diet_for_user # <--- Добавили импорт функции
 
 from dotenv import load_dotenv
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -2603,6 +2604,34 @@ def register():
     return render_template('register.html')
 
 
+@app.route('/generate_diet')
+@login_required
+def generate_diet():
+    user = get_current_user()
+    if not getattr(user, 'has_subscription', False):
+        flash("Генерация диеты доступна только по подписке.", "warning")
+        return redirect(url_for('profile'))
+
+    user_id = session.get('user_id')
+
+    # Используем новую логику из assistant_bp
+    result = generate_diet_for_user(user_id, amplitude_instance=amplitude)
+
+    if result.get("success"):
+        # Показываем пользователю обоснование от ИИ во flash сообщении (или просто успех)
+        justification = result.get("justification", "")
+        # Ограничим длину flash сообщения, чтобы не забить экран
+        short_msg = "Диета готова! " + (justification[:100] + "..." if len(justification) > 100 else justification)
+        flash(short_msg, "success")
+        return jsonify({"redirect": "/diet"})
+
+    elif result.get("code") == 404:
+        return jsonify({"error": "Unauthorized"}), 401
+    else:
+        error_msg = result.get("error", "Unknown error")
+        flash(f"Ошибка генерации: {error_msg}", "error")
+        return jsonify({"error": error_msg}), 500
+
 @app.route('/profile')
 @login_required
 def profile():
@@ -3331,121 +3360,6 @@ def generate_telegram_code():
     return jsonify({'code': code})
 
 
-@app.route('/generate_diet')
-@login_required
-def generate_diet():
-    user = get_current_user()
-    if not getattr(user, 'has_subscription', False):
-        flash("Генерация диеты доступна только по подписке.", "warning")
-        return redirect(url_for('profile'))
-
-    user_id = session.get('user_id')
-    user = db.session.get(User, user_id)
-    if not user:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    goal = request.args.get("goal", "maintain")
-    gender = user.sex or "male"
-    preferences = request.args.get("preferences", "")
-    latest_analysis = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
-    required_attrs = ['height', 'weight', 'muscle_mass', 'fat_mass', 'metabolism']
-    if not (latest_analysis and all(getattr(latest_analysis, attr, None) is not None for attr in required_attrs)):
-        flash("Пожалуйста, загрузите актуальный анализ тела для генерации диеты.", "warning")
-        return jsonify({"redirect": url_for('profile')})
-
-    prompt = f"""
-У пользователя следующие параметры:
-Рост: {latest_analysis.height} см
-Вес: {latest_analysis.weight} кг
-Мышечная масса: {latest_analysis.muscle_mass} кг
-Жировая масса: {latest_analysis.fat_mass} кг
-Метаболизм: {latest_analysis.metabolism} ккал
-Цель: {goal}
-Пол: {gender}
-Предпочтения: {preferences}
-
-Составь рацион питания на 1 день: завтрак, обед, ужин, перекус. Для каждого укажи:
-- название блюда ("name")
-- граммовку ("grams")
-- калории ("kcal")
-- подробный пошаговый рецепт приготовления ("recipe")
-
-Верни JSON строго по формату:
-```json
-{
-    "breakfast": [{"name": "...", "grams": 0, "kcal": 0, "recipe": "..."}],
-    "lunch": [...],
-    "dinner": [...],
-    "snack": [...],
-    "total_kcal": 0,
-    "protein": 0,
-    "fat": 0,
-    "carbs": 0
-}
-```"""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Ты профессиональный диетолог. Отвечай строго в формате JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1500
-        )
-        content = response.choices[0].message.content.strip()
-        if '```json' in content:
-            content = content.split('```json')[1].split('```')[0].strip()
-        diet_data = json.loads(content)
-
-        existing_diet = Diet.query.filter_by(user_id=user_id, date=date.today()).first()
-        if existing_diet:
-            db.session.delete(existing_diet)
-            db.session.commit()
-
-        diet = Diet(
-            user_id=user_id,
-            date=date.today(),
-            breakfast=json.dumps(diet_data.get('breakfast', []), ensure_ascii=False),
-            lunch=json.dumps(diet_data.get('lunch', []), ensure_ascii=False),
-            dinner=json.dumps(diet_data.get('dinner', []), ensure_ascii=False),
-            snack=json.dumps(diet_data.get('snack', []), ensure_ascii=False),
-            total_kcal=diet_data.get('total_kcal'),
-            protein=diet_data.get('protein'),
-            fat=diet_data.get('fat'),
-            carbs=diet_data.get('carbs')
-        )
-        db.session.add(diet)
-        db.session.commit()
-
-        flash("Диета успешно сгенерирована!", "success")
-        from notification_service import send_user_notification
-        send_user_notification(
-            user_id=user.id,
-            title="🍽️ Ваша диета готова!",
-            body=f"Рацион на сегодня сгенерирован. Калории: {diet_data.get('total_kcal', 'N/A')} ккал.",
-            type='success',
-            data={"route": "/diet"}
-        )
-
-        try:
-            amplitude.track(BaseEvent(
-                event_type="Diet Generated",
-                user_id=str(user.id),
-                event_properties={
-                    "goal": goal,
-                    "total_kcal": diet_data.get('total_kcal'),
-                    "has_preferences": bool(preferences)
-                }
-            ))
-        except Exception as e:
-            print(f"Amplitude error: {e}")
-
-        return jsonify({"redirect": "/diet"})
-
-    except Exception as e:
-        flash(f"Ошибка генерации диеты: {e}", "error")
-        return jsonify({"error": str(e)}), 500
 
 
 
