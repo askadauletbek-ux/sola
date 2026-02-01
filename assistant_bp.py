@@ -169,57 +169,92 @@ def generate_diet_for_user(user_id, amplitude_instance=None):
     context = get_full_user_context(user_id)
     profile = context['profile']
     metrics = context['metrics']
+    activity = context['activity']
 
-    name = profile['name'] or "Пользователь"
-    current_weight = metrics['weight'] or "неизвестен"
-    goal_weight = profile['goal_weight'] or "не указан"
-    bmr = metrics['metabolism'] or 1600
+    # --- РАСЧЕТ КАЛОРИЙ (Научный подход) ---
 
-    # Расчет TDEE
-    activity_factor = 1.2
-    if context['activity']['avg_weekly_steps'] > 10000:
-        activity_factor = 1.55
-    elif context['activity']['avg_weekly_steps'] > 5000:
-        activity_factor = 1.375
-    tdee = int(bmr * activity_factor)
+    # 1.1 Базовые параметры
+    weight = float(metrics['weight'] or 70)
+    height = float(metrics['height'] or 170)
+    age = profile['age']
+    if isinstance(age, str): age = 30  # Дефолт, если возраст не указан
 
-    # Цель
-    goal_instruction = "поддержание веса"
+    gender = profile['gender']
+
+    # 1.2 Расчет BMR (Базовый обмен веществ)
+    # Если есть данные с умных весов - берем их, иначе формула Миффлина-Сан Жеора
+    bmr = metrics.get('metabolism')
+    if not bmr:
+        if gender == 'female':
+            bmr = (10 * weight) + (6.25 * height) - (5 * age) - 161
+        else:
+            bmr = (10 * weight) + (6.25 * height) - (5 * age) + 5
+
+    # 1.3 Уровень активности (TDEE)
+    avg_steps = activity.get('avg_weekly_steps', 0)
+    activity_factor = 1.2  # Сидячий (до 5000 шагов)
+
+    if avg_steps > 12000:
+        activity_factor = 1.55  # Высокая
+    elif avg_steps > 7000:
+        activity_factor = 1.375  # Средняя
+
+    tdee = int(bmr * activity_factor)  # Точка равновесия
+
+    # 1.4 Корректировка под цель
+    goal_type = "maintain"
+    target_calories = tdee
+
     if user.fat_mass_goal:
-        goal_instruction = "потеря жира (дефицит калорий, высокий белок)"
+        # Цель: похудение
+        goal_type = "lose_fat"
+        target_calories = int(tdee * 0.85)  # Дефицит 15%
+        if target_calories < bmr:  # Не опускаемся ниже BMR, это опасно
+            target_calories = int(bmr)
     elif user.muscle_mass_goal:
-        goal_instruction = "набор мышечной массы (профицит калорий)"
+        # Цель: набор массы
+        goal_type = "gain_muscle"
+        target_calories = int(tdee * 1.10)  # Профицит 10%
+
+    # Формируем текстовое описание цели для промпта
+    goal_desc_map = {
+        "lose_fat": f"Сжигание жира. Дефицит калорий (Цель: {target_calories} ккал). Высокий белок.",
+        "gain_muscle": f"Набор мышечной массы. Профицит калорий (Цель: {target_calories} ккал).",
+        "maintain": f"Поддержание веса и тонуса (Цель: {target_calories} ккал)."
+    }
+    goal_instruction = goal_desc_map.get(goal_type)
 
     # 2. Промпт
+    # ВАЖНО: В примере JSON используем РЕАЛЬНЫЕ данные, чтобы ИИ не копировал "0г".
     prompt = f"""
     Роль: Ты — профессиональный спортивный диетолог Kilo.
-    Клиент: {name}.
-    Параметры: Вес {current_weight}кг, BMR {bmr}, Расход (TDEE) ~{tdee} ккал.
-    Цель: {goal_instruction}. Желаемый вес: {goal_weight}кг.
+    Клиент: {profile['name']}.
+    Параметры: Вес {weight}кг, Рост {height}см, Возраст {age}.
+    Расчеты: BMR {int(bmr)}, TDEE {tdee}.
+
+    ГЛАВНАЯ ЦЕЛЬ: {goal_instruction}
 
     ЗАДАЧА:
-    1. Рассчитай КБЖУ под цель.
-    2. Составь КОНКРЕТНЫЙ рацион на 1 день.
+    Составь подробный рацион на 1 день, строго попадая в {target_calories} ккал (+/- 50 ккал).
 
-    ВАЖНО:
-    - ЗАПРЕЩЕНО писать "Блюдо", "Dish". Пиши реальные названия (напр. "Омлет с помидорами").
-    - ЗАПРЕЩЕНО писать вес "0г". Вес должен быть реальным.
-    - Сумма калорий блюд должна совпадать с total_kcal.
+    СТРОГИЕ ПРАВИЛА:
+    1. ЗАПРЕЩЕНО писать "Блюдо", "Dish", "Еда". Пиши конкретные названия (напр. "Омлет с шпинатом", "Куриное филе гриль").
+    2. ЗАПРЕЩЕНО указывать вес "0г" или "0g". Вес должен быть реалистичным (напр. 200, 150).
+    3. Калорийность каждого блюда должна быть > 0.
+    4. Сумма калорий ВСЕХ блюд должна быть равна {target_calories}.
 
-    3. Напиши ОБОСНОВАНИЕ (justification). 
-       Обращайся к пользователю на "Вы" или по имени.
-       Используй первое лицо ("Я составил", "Я рекомендую").
-       Объясни, почему выбраны такие калории и БЖУ.
-
-    Верни JSON:
+    СТРУКТУРА ОТВЕТА (JSON):
     {{
-        "justification": "Текст обоснования...",
+        "justification": "Обращение к клиенту по имени. Объясни, почему выбрана калорийность {target_calories} (на основе BMR {int(bmr)} и активности). Объясни выбор БЖУ для цели.",
         "diet_plan": {{
-            "breakfast": [{{"name": "...", "grams": 200, "kcal": 300, "recipe": "..."}}],
-            "lunch": [...],
-            "dinner": [...],
-            "snack": [...],
-            "total_kcal": 0,
+            "breakfast": [
+                {{"name": "Овсяная каша на воде с ягодами", "grams": 250, "kcal": 300, "recipe": "Варить овсянку 10 мин, добавить..."}},
+                {{"name": "Вареное яйцо", "grams": 55, "kcal": 70, "recipe": "Варить 7 минут"}}
+            ],
+            "lunch": [ ... ],
+            "dinner": [ ... ],
+            "snack": [ ... ],
+            "total_kcal": {target_calories},
             "protein": 0,
             "fat": 0,
             "carbs": 0
@@ -231,7 +266,8 @@ def generate_diet_for_user(user_id, amplitude_instance=None):
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "Ты диетолог Kilo. Отвечай только валидным JSON."},
+                {"role": "system",
+                 "content": "Ты диетолог. Отвечай только валидным JSON. Генерируй реальные блюда и граммовки."},
                 {"role": "user", "content": prompt}
             ],
             temperature=DIET_TEMPERATURE,
@@ -245,8 +281,12 @@ def generate_diet_for_user(user_id, amplitude_instance=None):
         diet_plan = data.get("diet_plan")
         justification = data.get("justification", f"Рацион составлен для цели: {goal_instruction}")
 
-        if not diet_plan or diet_plan.get('total_kcal', 0) < 500:
-            return {"error": "Сгенерирован некорректный план (слишком мало калорий или пустой).", "code": 500}
+        if not diet_plan:
+            return {"error": "AI generation failed (empty plan)", "code": 500}
+
+        # Валидация на случай сбоя ИИ
+        if diet_plan.get('total_kcal', 0) < 500:
+            return {"error": "AI generated suspicious low calorie diet", "code": 500}
 
         # 3. Сохранение в БД
         Diet.query.filter_by(user_id=user.id, date=date.today()).delete()
@@ -266,21 +306,22 @@ def generate_diet_for_user(user_id, amplitude_instance=None):
         db.session.add(new_diet)
         db.session.commit()
 
-        # 4. Формируем текстовое сообщение для истории чата
-        menu_text = format_diet_string(diet_plan)
-        final_message_text = f"{justification}\n{menu_text}"
+        # 4. Обновление контекста чата (Session)
+        chat_history = session.get('chat_history', [])
 
-        # Сохраняем в сессию (чтобы чат помнил контекст)
-        if 'chat_history' in session:
-            chat_history = session['chat_history']
-            chat_history.append({"role": "assistant", "content": final_message_text})
-            session['chat_history'] = chat_history[-15:]
+        # Сохраняем краткое саммари для контекста
+        diet_context_msg = {
+            "role": "assistant",
+            "content": f"{justification}\n(Сгенерирован рацион: {diet_plan.get('total_kcal')} ккал. БЖУ: {diet_plan.get('protein')}/{diet_plan.get('fat')}/{diet_plan.get('carbs')})"
+        }
+        chat_history.append(diet_context_msg)
+        session['chat_history'] = chat_history[-15:]
 
         # 5. Уведомление
         send_user_notification(
             user_id=user.id,
-            title="🍽️ План питания готов!",
-            body=f"Калории: {diet_plan.get('total_kcal')}. {justification[:40]}...",
+            title="🍽️ Индивидуальный план готов!",
+            body=f"Калории: {diet_plan.get('total_kcal')}. {justification[:50]}...",
             type='success',
             data={"route": "/diet"}
         )
@@ -293,19 +334,20 @@ def generate_diet_for_user(user_id, amplitude_instance=None):
                     user_id=str(user.id),
                     event_properties={
                         "calories": diet_plan.get('total_kcal'),
-                        "goal": goal_instruction
+                        "goal": goal_type,
+                        "bmr": bmr,
+                        "tdee": tdee
                     }
                 ))
             except Exception as e:
                 print(f"Amplitude error: {e}")
 
-        # Возвращаем полный текст ответа для использования в API
-        return {"success": True, "justification": justification, "full_text": final_message_text}
+        return {"success": True, "justification": justification,
+                "full_text": f"{justification}\n{format_diet_string(diet_plan)}"}
 
     except Exception as e:
         logger.exception("Error in generate_diet_for_user")
         return {"error": str(e), "code": 500}
-
 
 # ------------------------------------------------------------------
 # Эндпоинты
