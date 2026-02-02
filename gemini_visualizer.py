@@ -1,87 +1,84 @@
 import os
+import io
 import time
-import uuid
+from datetime import datetime
 from typing import Tuple, Dict
+import uuid
 
+from PIL import Image
 from google import genai
 from google.genai import types
 
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Imagen 4 Ultra - идеален для работы с референсами
-IMAGE_MODEL_NAME = "imagen-4.0-ultra-generate-001"
-# Gemini 2.0 Flash - используем только для математики тела, лицо не трогаем
-REASONING_MODEL_NAME = "gemini-2.0-flash"
+# Убедитесь, что эта модель доступна в вашем регионе/аккаунте
+MODEL_NAME = "imagen-4.0-ultra-generate-001"
 
-
-def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, float]) -> str:
+def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, scene_id: str) -> str:
     """
-    Генерирует описание ТОЛЬКО ТЕЛА (от шеи и ниже).
-    Лицо описывать запрещено, чтобы не сбить Subject Reference.
+    Финальная версия промпта, использующая унифицированные ключи height и weight.
     """
-    height = metrics.get("height", 175)
-    weight = metrics.get("weight", 80)
-    fat_mass = metrics.get("fat_mass")
-    muscle_mass = metrics.get("muscle_mass")
-
-    # Расчет процентов
+    # Теперь используем ключи 'height' и 'weight', как в основной модели BodyAnalysis
+    height = metrics.get("height")
+    weight = metrics.get("weight")
     fat_pct = metrics.get("fat_pct")
-    if fat_pct is None and weight > 0:
-        fat_pct = (fat_mass / weight) * 100 if fat_mass else 20
-
     muscle_pct = metrics.get("muscle_pct")
-    if muscle_pct is None and weight > 0:
-        muscle_pct = (muscle_mass / weight) * 100 if muscle_mass else 40
 
-    prompt = f"""
-    Act as a fitness anatomy expert.
-    Describe the NECK DOWN body physique for a {sex}.
-    Stats: Height {height}cm, Weight {weight}kg, Body Fat {fat_pct:.1f}%, Muscle {muscle_pct:.1f}%.
+    if sex == 'female':
+        clothing_description = "Plain black sports bra (top) and plain black athletic shorts. Simple, functional, no logos, no embellishments. Matte fabric."
+    else:  # male
+        clothing_description = "Plain black athletic shorts, bare torso. Simple, functional, no logos, no embellishments. Matte fabric."
 
-    Rules:
-    - Focus on muscle definition, vascularity, and fat distribution.
-    - DO NOT mention face, hair, or eyes.
-    - 10-14% Fat: Defined abs, athletic cut.
-    - 20%+ Fat: Soft belly, smooth torso.
+    photo_style = "Hyper-realistic, clinical, high-fidelity studio photograph. Captured with a professional medium-format camera (e.g., Hasselblad H6D-100c) and a prime 120mm macro lens set to f/11 for maximum depth of field and sharpness across the entire body. RAW photo, unedited, unprocessed."
 
-    Output concise visual string (max 30 words).
-    """
-
-    try:
-        response = client.models.generate_content(
-            model=REASONING_MODEL_NAME,
-            contents=[types.Part(text=prompt)]
-        )
-        return response.text.strip()
-    except Exception as e:
-        if fat_pct < 15: return "shredded athletic physique, visible abs"
-        if fat_pct < 25: return "fit athletic build"
-        return "soft physique, heavy build"
-
-
-def _build_final_prompt(body_desc: str, sex: str) -> str:
-    """
-    Строит промпт, который игнорирует текстовое описание лица
-    и ссылается строго на [subject_id:0].
-    """
-    clothing = "black athletic shorts" if sex == 'male' else "black sports bra and leggings"
-
-    # ГЛАВНЫЙ СЕКРЕТ 1 В 1:
-    # Мы пишем "Photo of [subject_id:0]". Мы НЕ пишем "Photo of a man".
-    # Это заставляет модель брать пиксели из референса.
     return f"""
-    Raw studio photo of [subject_id:0].
-    The subject has a {body_desc}.
-    Wearing {clothing}.
+# PRIMARY OBJECTIVE: ABSOLUTE PHOTOREALISM & SCIENTIFIC DATA ACCURACY
+The output MUST be a physically accurate, hyper-realistic photographic representation of the human body strictly based on the provided metrics. 
 
-    Details:
-    - Full body shot, standing straight.
-    - 8k resolution, photorealistic, raw style.
-    - Neutral lighting, white background.
-    - Head and face must explicitly match the reference [subject_id:0].
-    """
+# SCENE SETUP
+- **Scene ID:** {scene_id}
+- **Style:** {photo_style}
+- **Background:** Pure white (#FFFFFF) seamless studio cyclorama.
+- **Camera:** Static, eye-level, full-height shot. 120mm focal length.
+- **Lighting:** Ultra-flat, high-key diffused studio lighting. No shadows.
 
+# COMPOSITION
+- **Visibility:** The ENTIRE subject (head to feet) MUST be fully visible.
+- **Margins:** 5-10% white margin above head and below feet.
+- **NO CROPPING:** Do not crop hair, fingers, or toes.
+
+# SUBJECT & IDENTITY
+- **Pose:** Strict anatomical A-pose.
+- **Identity:** The face MUST be an EXACT, UNALTERED match to the provided avatar image.
+- **Clothing:** {clothing_description}
+
+# BODY SPECIFICATION FOR "{variant_label}"
+- **sex:** {sex}
+- **height_cm:** {height}
+- **weight_kg:** {weight}
+- **fat_percent:** {fat_pct}% (LITERAL translation to subcutaneous fat. High = softer contours, Low = tight skin).
+- **muscle_percent:** {muscle_pct}% (LITERAL translation to muscle volume and definition).
+
+# REALISM DIRECTIVES
+- **Skin Texture:** Microscopic detail: pores, natural variations, no airbrushing.
+- **Gravity:** Realistic effects on soft tissues (fat) and muscles.
+- **Proportions:** Anthropometrically correct for the specified height and sex.
+
+The final output must be an authentic, unedited, high-resolution photograph.
+""".strip()
+
+def _extract_first_image_bytes(response) -> bytes:
+    if not response or not getattr(response, "candidates", []):
+        raise RuntimeError("No candidates returned by Gemini model.")
+
+    for cand in response.candidates:
+        if cand.content and cand.content.parts:
+            for part in cand.content.parts:
+                if part.inline_data and part.inline_data.data:
+                    return part.inline_data.data
+
+    raise RuntimeError("No image data found in response parts.")
 
 def _save_png_to_db(raw_bytes: bytes, user_id: int, base_name: str) -> str:
     unique_filename = f"viz_{user_id}_{base_name}_{uuid.uuid4().hex}.png"
@@ -95,103 +92,64 @@ def _save_png_to_db(raw_bytes: bytes, user_id: int, base_name: str) -> str:
     db.session.add(new_file)
     return unique_filename
 
-
 def _compute_pct(value: float, weight: float) -> float:
     if not value or not weight or weight <= 0:
         return 0.0
     return round(100.0 * float(value) / float(weight), 2)
 
-
-def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
-Tuple[str, str]:
+def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> Tuple[str, str]:
+    """
+    Генерирует изображения До и После, нормализуя входные данные для промпта.
+    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set")
 
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
+    scene_id = f"scene-{uuid.uuid4().hex}"
 
-    # 1. Подготовка метрик
-    if not metrics_current.get("fat_pct") and metrics_current.get("weight"):
-        metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), metrics_current.get("weight"))
-    if not metrics_current.get("height"):
-        metrics_current["height"] = metrics_target.get("height") or metrics_target.get("height_cm") or 175
+    # 1. Подготовка ТЕКУЩИХ метрик (Точка А)
+    # Приводим к ключам, которые ожидает _build_prompt
+    curr_weight = metrics_current.get("weight", 0)
+    metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
+    # Если мышечная масса не передана, берем среднее (например, 40% от веса)
+    curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
+    metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
 
-    if not metrics_target.get("fat_pct") and metrics_target.get("weight_kg"):
-        metrics_target["fat_pct"] = _compute_pct(metrics_target.get("fat_mass", 0), metrics_target.get("weight_kg"))
+    # 2. Подготовка ЦЕЛЕВЫХ метрик (Точка Б)
+    # В metrics_target от бэкенда приходят ключи weight_kg и height_cm
+    tgt_weight = metrics_target.get("weight_kg", 0)
+    tgt_data_for_prompt = {
+        "height": metrics_target.get("height_cm"),
+        "weight": tgt_weight,
+        "fat_pct": metrics_target.get("fat_pct"),
+        "muscle_pct": metrics_target.get("muscle_pct")
+    }
 
-    # 2. Описываем ТОЛЬКО ТЕЛО (теперь без анализа лица)
-    current_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_current)
-    target_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_target)
+    # Генерация текущего состояния
+    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", scene_id)
+    contents_curr = [
+        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
+        types.Part(text=prompt_curr),
+    ]
+    resp_curr = client.models.generate_content(model=MODEL_NAME, contents=contents_curr)
+    curr_png = _extract_first_image_bytes(resp_curr)
 
-    # 3. Настройка Референса (Ключевой этап)
-    try:
-        ref_image = types.Image(image_bytes=avatar_bytes)
+    # Генерация целевого состояния
+    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target", scene_id)
+    contents_tgt = [
+        types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
+        types.Part(text=prompt_tgt),
+    ]
+    resp_tgt = client.models.generate_content(model=MODEL_NAME, contents=contents_tgt)
+    tgt_png = _extract_first_image_bytes(resp_tgt)
 
-        reference_config = [
-            types.ReferenceImage(
-                image=ref_image,
-                subject_id="0",
-                # ВАЖНО: Описание должно быть максимально абстрактным.
-                # Если написать "Asian man", модель начнет фантазировать.
-                # Если написать "Person's face", она будет смотреть на картинку.
-                subject_description="A portrait of the person's face"
-            )
-        ]
-
-        config = types.GenerateImagesConfig(
-            number_of_images=1,
-            aspect_ratio="9:16",
-            output_mime_type="image/png",
-            reference_images=reference_config
-        )
-    except Exception as e:
-        # Fallback для старых версий SDK
-        print(f"Config Error: {e}")
-        config = types.GenerateImagesConfig(number_of_images=1, aspect_ratio="9:16", output_mime_type="image/png")
-
-    # Функция генерации
-    def _gen_image(body_desc):
-        # Строим промпт только вокруг subject_id
-        prompt_text = _build_final_prompt(body_desc, user.sex or "male")
-
-        try:
-            return client.models.generate_images(
-                model=IMAGE_MODEL_NAME,
-                prompt=prompt_text,
-                config=config
-            )
-        except Exception as e:
-            # Fallback на Gemini Flash, если Imagen упал
-            # Тут мы пытаемся выкрутиться через текстовый промпт, так как Flash не умеет Subject ID
-            print(f"Imagen failed ({e}), using fallback...")
-            return client.models.generate_images(
-                model='gemini-2.0-flash',
-                prompt=prompt_text + ". Ensure facial identity matches the reference provided.",
-                config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="9:16", output_mime_type="image/png")
-            )
-
-    # --- ГЕНЕРАЦИЯ ---
-    try:
-        # Current
-        response_curr = _gen_image(current_body_desc)
-        if not response_curr.generated_images: raise RuntimeError("No image for Current")
-        curr_png = response_curr.generated_images[0].image.image_bytes
-
-        # Target
-        response_tgt = _gen_image(target_body_desc)
-        if not response_tgt.generated_images: raise RuntimeError("No image for Target")
-        tgt_png = response_tgt.generated_images[0].image.image_bytes
-
-    except Exception as e:
-        raise RuntimeError(f"Generation pipeline failed: {str(e)}")
-
-    # 5. Сохранение
+    # Сохранение в БД
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
     return curr_filename, tgt_filename
-
 
 def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: Dict[str, float],
                   metrics_target: Dict[str, float]):
@@ -202,7 +160,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-4-subject-ref-v2"
+        provider="gemini"
     )
     db.session.add(vis)
     db.session.commit()
