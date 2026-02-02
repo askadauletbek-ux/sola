@@ -9,73 +9,68 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# ИСПОЛЬЗУЕМ IMAGEN 3 ДЛЯ ГЕНЕРАЦИИ (High Fidelity)
-# Убедитесь, что 'imagen-3.0-generate-001' включена в Google Cloud Console
+# --- ИСПОЛЬЗУЕМ ТОПОВУЮ МОДЕЛЬ ИЗ ВАШЕГО СПИСКА (IMAGEN 4) ---
 MODEL_NAME = "imagen-4.0-generate-001"
 
 
 def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> str:
     """
-    Создает промпт для Imagen 3.
-    Переводит численные метрики в визуальные описания и задает жесткий фрейминг.
+    Промпт адаптирован для Imagen 4.
+    Эта модель отлично понимает естественный язык и детали композиции.
     """
     height = metrics.get("height", 170)
     weight = metrics.get("weight", 70)
     fat_pct = metrics.get("fat_pct", 20)
     muscle_pct = metrics.get("muscle_pct", 40)
 
-    # --- 1. Перевод цифр в визуальные дескрипторы ---
+    # 1. Описание телосложения
     body_features = []
 
-    # Жировая прослойка (Fat %)
+    # Жировая прослойка
     if fat_pct < 10:
-        body_features.append("extremely shredded, visible vascularity, striated muscle, thin skin")
+        body_features.append("extremely shredded, vascular, thin skin, visible muscle striations")
     elif fat_pct < 15:
-        body_features.append("very lean, visible six-pack abs, sharp muscle separation")
-    elif fat_pct < 20:
-        body_features.append("athletic fit, flat stomach, visible muscle tone")
-    elif fat_pct < 28:
-        body_features.append("average build, healthy weight, smooth contours, soft definition")
-    elif fat_pct < 35:
-        body_features.append("soft body composition, rounded contours, visible subcutaneous fat, 'dad bod' or 'curvy'")
+        body_features.append("very lean, defined six-pack abs, athletic cut")
+    elif fat_pct < 22:
+        body_features.append("fit, flat stomach, healthy muscle definition")
+    elif fat_pct < 30:
+        body_features.append("soft body composition, smooth contours, average build")
     else:
-        body_features.append("heavy build, significant soft tissue, rounded abdomen")
+        body_features.append("heavy build, rounded contours, visible soft tissue")
 
-    # Мышечная масса (Muscle %)
-    if muscle_pct > 45:
-        body_features.append("massive hypertrophied muscles, bodybuilder physique, wide shoulders, thick neck")
-    elif muscle_pct > 38:
-        body_features.append("strong athletic build, developed chest and arms, gym-goer physique")
+    # Мышечная масса
+    if muscle_pct > 42:
+        body_features.append("heavy musculature, bodybuilder physique, broad shoulders")
+    elif muscle_pct > 36:
+        body_features.append("athletic build, well-developed muscles")
     else:
-        body_features.append("average musculature, slender frame, not bulky")
+        body_features.append("average musculature, not bulky")
 
     body_desc_str = ", ".join(body_features)
 
-    # --- 2. Одежда ---
+    # 2. Одежда
     if sex == 'female':
-        clothing = "wearing a simple black minimalist sports bra and tight black leggings"
+        clothing = "wearing a black minimalist sports bra and black leggings"
     else:
-        # Для мужчин: шорты и голый торс для лучшей видимости прогресса
-        clothing = "wearing plain black athletic shorts, shirtless, bare torso"
+        clothing = "wearing black athletic shorts, shirtless, bare torso"
 
-    # --- 3. Сборка промпта с "Якорями" композиции ---
-    # Фразы "Wide shot", "Show shoes" и "Space above head" критичны для одинакового зума
+    # 3. Сборка промпта
+    # Imagen 4 хорошо понимает инструкции по кадрированию.
     return f"""
 Full-body studio photograph of a {sex}, height {height}cm, weight {weight}kg.
-Physique description: {body_desc_str}.
+Physique details: {body_desc_str}.
 Clothing: {clothing}.
-Pose: Standing in a neutral anatomical A-pose, arms relaxed at sides, looking directly at camera.
+Pose: Standing in a neutral anatomical A-pose, arms relaxed at sides, looking at camera.
 Background: Plain white studio background.
 
-IMPORTANT COMPOSITION RULES:
-- Wide angle lens full shot.
-- The image MUST show the entire body from the top of the head to the bottom of the shoes.
-- Visible feet and shoes are required.
-- Include empty white space above the head and below the feet.
-- Do NOT crop the head. Do NOT crop the feet.
-- Camera at waist height, looking straight on.
+COMPOSITION REQUIRED:
+- Wide shot.
+- Full body visible from head to toe.
+- Feet and shoes MUST be visible.
+- Leave empty white space above the head.
+- Do NOT crop the head or feet.
 
-Style: 8k resolution, photorealistic, cinematic lighting, highly detailed skin texture, raw photo style, unedited.
+Style: 8k, hyper-realistic, highly detailed skin texture, professional studio lighting.
 """.strip()
 
 
@@ -100,9 +95,6 @@ def _compute_pct(value: float, weight: float) -> float:
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
 Tuple[str, str]:
-    """
-    Генерирует изображения До и После используя Imagen 3.
-    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set")
@@ -110,15 +102,12 @@ Tuple[str, str]:
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
 
-    # --- 1. Подготовка метрик ---
-
-    # Current
+    # --- Подготовка метрик ---
     curr_weight = metrics_current.get("weight", 0)
     metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
     curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
     metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
 
-    # Target
     tgt_data_for_prompt = {
         "height": metrics_target.get("height_cm"),
         "weight": metrics_target.get("weight_kg"),
@@ -126,17 +115,17 @@ Tuple[str, str]:
         "muscle_pct": metrics_target.get("muscle_pct")
     }
 
-    # --- 2. Конфигурация Генерации ---
-    # УБРАЛИ include_rai_reasoning, так как он вызывает ошибку валидации
+    # --- Конфигурация Генерации ---
+    # aspect_ratio="9:16" - Важно для фото в полный рост
+    # УБРАН include_rai_reasoning, чтобы избежать ошибки валидации
     config = types.GenerateImagesConfig(
         number_of_images=1,
         aspect_ratio="9:16",
         output_mime_type="image/png"
     )
 
-    # --- 3. Генерация CURRENT ---
+    # --- Генерация Current ---
     prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current")
-
     try:
         response_curr = client.models.generate_images(
             model=MODEL_NAME,
@@ -147,12 +136,11 @@ Tuple[str, str]:
             raise RuntimeError("Imagen returned no images for Current state.")
         curr_png = response_curr.generated_images[0].image.image_bytes
     except Exception as e:
-        # Логируем ошибку, чтобы понять детали, если что-то пойдет не так
-        raise RuntimeError(f"Error generating Current image: {str(e)}")
+        # Логируем ошибку с именем модели
+        raise RuntimeError(f"Error generating Current image ({MODEL_NAME}): {str(e)}")
 
-    # --- 4. Генерация TARGET ---
+    # --- Генерация Target ---
     prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target")
-
     try:
         response_tgt = client.models.generate_images(
             model=MODEL_NAME,
@@ -163,19 +151,17 @@ Tuple[str, str]:
             raise RuntimeError("Imagen returned no images for Target state.")
         tgt_png = response_tgt.generated_images[0].image.image_bytes
     except Exception as e:
-        raise RuntimeError(f"Error generating Target image: {str(e)}")
+        raise RuntimeError(f"Error generating Target image ({MODEL_NAME}): {str(e)}")
 
-    # --- 5. Сохранение ---
+    # Сохранение
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
     return curr_filename, tgt_filename
 
+
 def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: Dict[str, float],
                   metrics_target: Dict[str, float]):
-    """
-    Создает запись в базе данных о проведенной визуализации.
-    """
     vis = BodyVisualization(
         user_id=user.id,
         metrics_current=metrics_current,
@@ -183,7 +169,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-3"
+        provider="imagen-4"
     )
     db.session.add(vis)
     db.session.commit()
