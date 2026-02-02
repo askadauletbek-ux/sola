@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+import json
 from typing import Tuple, Dict
 
 from google import genai
@@ -9,32 +10,34 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Используем Imagen 4 (или 3, если 4 недоступна) для лучшего понимания промптов
-MODEL_NAME = "imagen-4.0-generate-001"
-# Вспомогательная модель для анализа лица
-VISION_MODEL_NAME = "gemini-2.0-flash"
+# Используем самую мощную модель для генерации (из твоего списка)
+# Imagen 4 Ultra дает лучший фотореализм и текстуру кожи
+IMAGE_MODEL_NAME = "imagen-4.0-ultra-generate-001"
+
+# Модель для "рассуждений" (анализ лица и превращение цифр в описание тела)
+REASONING_MODEL_NAME = "gemini-2.0-flash"
 
 
 def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
     """
-    Создает точное текстовое описание лица на основе фото.
-    Это позволяет сохранить узнаваемость без использования FaceSwap.
+    1. Анализирует аватарку.
+    2. Извлекает ключевые черты лица для сохранения идентичности.
     """
     try:
-        # Промпт для vision-модели: опиши только лицо фактами
         prompt = """
-        Describe the face of the person in this image efficiently for a character prompt.
-        Focus on:
-        1. Ethnicity and skin tone.
-        2. Exact hair style and color.
-        3. Facial hair (beard/mustache) details.
-        4. Age approximation.
-        5. Distinctive facial features (shape, eyes).
-        Output format: "A [ethnicity] man, [age] years old, with [hair] and [beard], [skin tone] skin."
-        Do NOT describe clothing or body.
+        Analyze the face in this image for a character consistency prompt. 
+        Describe ONLY the face features strictly and concisely:
+        1. Ethnicity/Skin tone (precise hex code or descriptive tone).
+        2. Exact hair style, texture, and color.
+        3. Facial structure (jawline, cheekbones, eye shape).
+        4. Facial hair (beard/stubble) if any.
+        5. Age approximation.
+
+        Output format example: "A Latino man, approx 30 years old, with short fade haircut, dark brown eyes, sharp jawline, and light stubble beard."
+        Do NOT describe clothing, background, or body.
         """
         response = client.models.generate_content(
-            model=VISION_MODEL_NAME,
+            model=REASONING_MODEL_NAME,
             contents=[
                 types.Part(text=prompt),
                 types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes))
@@ -43,80 +46,84 @@ def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
         return response.text.strip() if response.text else "A realistic man"
     except Exception as e:
         print(f"Error analyzing face: {e}")
-        return "A realistic man"
+        return "A realistic man with neutral expression"
 
 
-def _get_body_description(fat_pct: float, muscle_pct: float) -> str:
+def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, float]) -> str:
     """
-    Возвращает честное описание тела на основе процента жира.
-    Без прикрас и "героических" пропорций.
-    """
-    # 1. Описание жировой прослойки (СУХИЕ ФАКТЫ)
-    if fat_pct < 10:
-        fat_desc = "extremely low body fat, visible veins, shredded muscle definition, thin skin"
-    elif fat_pct < 15:
-        fat_desc = "athletic lean build, visible abs, defined muscles"
-    elif fat_pct < 20:
-        fat_desc = "fit build, flat stomach, healthy weight, slight muscle definition"
-    elif fat_pct < 25:
-        # 20-25%: Обычный мужчина, не толстый, но и не атлет
-        fat_desc = "average physique, soft midsection, no visible abs, normal build"
-    elif fat_pct < 30:
-        # 25-30%: (Твой случай 27кг/92кг = ~29%). Появляется живот.
-        fat_desc = "overweight physique, soft body, visible belly protrusion, love handles, soft arms, carrying extra weight"
-    elif fat_pct < 35:
-        fat_desc = "heavyset physique, large belly, thick waist, high body fat, round torso"
-    else:
-        fat_desc = "obese build, significant excess weight, very round body shape"
-
-    # 2. Описание мышц (Корректируем в зависимости от жира)
-    # Если жира много (>25%), мышцы под ним не видны, даже если их много.
-    if fat_pct > 25:
-        muscle_desc = "muscles hidden by fat"
-    elif muscle_pct > 42:
-        muscle_desc = "heavy muscle mass, broad build"
-    elif muscle_pct > 38:
-        muscle_desc = "athletic musculature"
-    else:
-        muscle_desc = "average muscle mass"
-
-    return f"{fat_desc}, {muscle_desc}"
-
-
-def _build_prompt(sex: str, metrics: Dict[str, float], face_description: str) -> str:
-    """
-    Собирает промпт, ориентированный на реализм.
+    «Мозг» системы. Превращает сухие цифры в визуальное описание тела.
     """
     height = metrics.get("height", 175)
     weight = metrics.get("weight", 80)
-    fat_pct = metrics.get("fat_pct", 25)
-    muscle_pct = metrics.get("muscle_pct", 40)
+    fat_mass = metrics.get("fat_mass")
+    muscle_mass = metrics.get("muscle_mass")
 
-    # Получаем текстовое описание тела
-    body_visuals = _get_body_description(fat_pct, muscle_pct)
+    # Если есть только масса, считаем проценты для ИИ, чтобы ему было понятнее
+    fat_pct = metrics.get("fat_pct")
+    if fat_pct is None and weight > 0:
+        fat_pct = (fat_mass / weight) * 100 if fat_mass else 20
 
-    # Одежда: для честного прогресса лучше всего простые шорты
-    clothing = "plain black boxer briefs" if sex == 'male' else "black sports bra and panties"
+    muscle_pct = metrics.get("muscle_pct")
+    if muscle_pct is None and weight > 0:
+        muscle_pct = (muscle_mass / weight) * 100 if muscle_mass else 40
 
-    # Промпт:
-    # 1. Лицо (из аватара)
-    # 2. Тело (из метрик)
-    # 3. Стиль (реализм, документальное фото)
+    # Промпт для ИИ-диетолога
+    prompt = f"""
+    You are a professional fitness visualizer. 
+    Convert these biometrics into a PHOTOGRAPHIC visual description of a human body for an AI image generator.
+
+    Subject: {sex}
+    Height: {height} cm
+    Weight: {weight} kg
+    Body Fat: {fat_pct:.1f}%
+    Muscle Mass: aprox {muscle_pct:.1f}% (or relative to weight)
+
+    Rules:
+    1. Analyze the Fat/Muscle ratio. 
+       - Low fat + High muscle = Vascular, striated, defined.
+       - High fat + High muscle = "Bear mode", bulky, thick neck, undefined abs.
+       - Low fat + Low muscle = Skinny, bony.
+       - High fat + Low muscle = Soft, round, lack of definition ("Skinny fat").
+    2. Describe specific areas: Abs visibility, arm vascularity, chest definition, waist width, face fullness (fat affects face shape!).
+    3. Be brutally honest regarding the stats. If 30% fat, describe a soft belly. If 10%, describe distinct abs.
+
+    Output ONLY the visual description string (max 50 words). 
+    Example: "Athletic build with visible upper abs, defined deltoids, slight vascularity in forearms, lean face with sharp jawline."
+    """
+
+    try:
+        response = client.models.generate_content(
+            model=REASONING_MODEL_NAME,
+            contents=[types.Part(text=prompt)]
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"Error generating body desc: {e}")
+        # Fallback на старую логику если ИИ сбоит
+        if fat_pct < 15: return "extremely lean, shredded athletic physique"
+        if fat_pct < 25: return "fit average physique, flat stomach"
+        return "overweight physique, soft body, visible belly"
+
+
+def _build_final_prompt(face_description: str, body_description: str, sex: str) -> str:
+    """
+    Собирает финальный технический промпт для Imagen 4 Ultra.
+    """
+    clothing = "simple black athletic shorts, shirtless" if sex == 'male' else "black sports bra and leggings"
+
     return f"""
-Full-body raw photo of {face_description}.
-Height: {height}cm, Weight: {weight}kg.
-BODY COMPOSITION: {body_visuals}.
-Clothing: {clothing}, shirtless.
-Pose: Standing neutral A-pose, arms at sides, facing camera.
-Background: Neutral white studio wall.
+    raw photo, 8k uhd, dslr, soft lighting.
+    Subject: {face_description}.
+    Body: {body_description}.
+    Clothing: {clothing}.
+    Pose: Standing straight, arms relaxed at sides, full body shot, neutral background.
 
-STYLE:
-- Documentary body reference photography.
-- Realistic skin texture, natural lighting.
-- NOT an artistic render, NOT a fitness model photoshoot.
-- Accurate representation of body fat and shape described above.
-- Full body visible from head to toe.
-""".strip()
+    Details:
+    - Photorealistic skin texture, pores, imperfections.
+    - Anatomically correct muscle and fat distribution based on description.
+    - Consistent lighting.
+    - NO artistic filters, NO cartoon style.
+    """
 
 
 def _save_png_to_db(raw_bytes: bytes, user_id: int, base_name: str) -> str:
@@ -140,6 +147,13 @@ def _compute_pct(value: float, weight: float) -> float:
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
 Tuple[str, str]:
+    """
+    Главная функция генерации.
+    1. Анализирует лицо (1 раз).
+    2. Генерирует описание тела для "Сейчас".
+    3. Генерирует описание тела для "Цель".
+    4. Рисует две картинки с одним лицом.
+    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set")
@@ -147,47 +161,41 @@ Tuple[str, str]:
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
 
-    # 1. Анализируем лицо с аватара (Один раз для обоих фото)
-    # Это гарантирует, что на обоих фото будет один и тот же человек
+    # 1. Анализируем лицо (Константа для обоих изображений)
     face_description = _analyze_face_from_avatar(client, avatar_bytes)
+    print(f"[Visualizer] Face Analysis: {face_description}")
 
-    # 2. Подготовка метрик CURRENT
-    curr_weight = metrics_current.get("weight", 0)
-    metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
+    # 2. Генерируем описание тела CURRENT
+    # Вычисляем проценты, если их нет
+    if not metrics_current.get("fat_pct") and metrics_current.get("weight"):
+        metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), metrics_current.get("weight"))
 
-    # Если мышечная масса не передана, считаем грубо
-    curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
-    metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
+    current_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_current)
+    print(f"[Visualizer] Current Body: {current_body_desc}")
 
-    # 3. Подготовка метрик TARGET
-    # (Бэк может прислать разные ключи, унифицируем)
-    tgt_weight = metrics_target.get("weight_kg") or metrics_target.get("weight")
-    tgt_fat_mass = metrics_target.get("fat_mass")
+    # 3. Генерируем описание тела TARGET
+    # Важно: Target weight может отличаться от Current
+    if not metrics_target.get("fat_pct") and metrics_target.get("weight_kg"):
+        metrics_target["fat_pct"] = _compute_pct(metrics_target.get("fat_mass", 0), metrics_target.get("weight_kg"))
 
-    # Если fat_pct нет, считаем его из массы
-    tgt_fat_pct = metrics_target.get("fat_pct")
-    if tgt_fat_pct is None and tgt_weight and tgt_fat_mass:
-        tgt_fat_pct = _compute_pct(tgt_fat_mass, tgt_weight)
+    target_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_target)
+    print(f"[Visualizer] Target Body: {target_body_desc}")
 
-    tgt_data_processed = {
-        "height": metrics_target.get("height_cm") or metrics_target.get("height"),
-        "weight": tgt_weight,
-        "fat_pct": tgt_fat_pct,
-        "muscle_pct": metrics_target.get("muscle_pct")
-    }
-
-    # 4. Конфигурация
+    # 4. Конфигурация Imagen
+    # aspect_ratio="9:16" идеально для мобильных телефонов (Stories формат)
     config = types.GenerateImagesConfig(
         number_of_images=1,
         aspect_ratio="9:16",
-        output_mime_type="image/png"
+        output_mime_type="image/png",
+        # Для Imagen 4 Ultra можно включить person_generation параметры, если API поддерживает,
+        # но базовый промптинг работает отлично.
     )
 
-    # --- ГЕНЕРАЦИЯ CURRENT ---
-    prompt_curr = _build_prompt(user.sex or "male", metrics_current, face_description)
+    # --- ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ CURRENT ---
+    prompt_curr = _build_final_prompt(face_description, current_body_desc, user.sex or "male")
     try:
         response_curr = client.models.generate_images(
-            model=MODEL_NAME,
+            model=IMAGE_MODEL_NAME,
             prompt=prompt_curr,
             config=config
         )
@@ -197,11 +205,11 @@ Tuple[str, str]:
     except Exception as e:
         raise RuntimeError(f"Error generating Current image: {str(e)}")
 
-    # --- ГЕНЕРАЦИЯ TARGET ---
-    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_processed, face_description)
+    # --- ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ TARGET ---
+    prompt_tgt = _build_final_prompt(face_description, target_body_desc, user.sex or "male")
     try:
         response_tgt = client.models.generate_images(
-            model=MODEL_NAME,
+            model=IMAGE_MODEL_NAME,
             prompt=prompt_tgt,
             config=config
         )
@@ -211,7 +219,7 @@ Tuple[str, str]:
     except Exception as e:
         raise RuntimeError(f"Error generating Target image: {str(e)}")
 
-    # 5. Сохранение
+    # 5. Сохранение в БД (используя существующую логику UploadedFile)
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
@@ -220,6 +228,9 @@ Tuple[str, str]:
 
 def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: Dict[str, float],
                   metrics_target: Dict[str, float]):
+    """
+    Сохраняет запись о визуализации в таблицу BodyVisualization
+    """
     vis = BodyVisualization(
         user_id=user.id,
         metrics_current=metrics_current,
@@ -227,7 +238,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-face-aware"
+        provider="imagen-4-ultra-smart"
     )
     db.session.add(vis)
     db.session.commit()
