@@ -25,12 +25,12 @@ def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
     """
     try:
         prompt = """
-        Analyze the face in this image for a character consistency prompt. 
+        Analyze the face in this image to create a consistent character prompt. 
         Describe ONLY the face features strictly and concisely:
-        1. Ethnicity/Skin tone (precise hex code or descriptive tone).
+        1. Ethnicity/Skin tone (precise description).
         2. Exact hair style, texture, and color.
         3. Facial structure (jawline, cheekbones, eye shape).
-        4. Facial hair (beard/stubble) if any.
+        4. Facial hair (beard/stubble/mustache) if any.
         5. Age approximation.
 
         Output format example: "A Latino man, approx 30 years old, with short fade haircut, dark brown eyes, sharp jawline, and light stubble beard."
@@ -43,10 +43,10 @@ def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
                 types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes))
             ]
         )
-        return response.text.strip() if response.text else "A realistic man"
+        return response.text.strip() if response.text else "A realistic person with neutral expression"
     except Exception as e:
         print(f"Error analyzing face: {e}")
-        return "A realistic man with neutral expression"
+        return "A realistic person with neutral expression"
 
 
 def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, float]) -> str:
@@ -146,7 +146,7 @@ def _compute_pct(value: float, weight: float) -> float:
 
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
-Tuple[str, str]:
+        Tuple[str, str]:
     """
     Главная функция генерации.
     1. Анализирует лицо (1 раз).
@@ -170,6 +170,10 @@ Tuple[str, str]:
     if not metrics_current.get("fat_pct") and metrics_current.get("weight"):
         metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), metrics_current.get("weight"))
 
+    # Добавляем рост в метрики, если его нет (берем из Target или дефолт)
+    if not metrics_current.get("height"):
+        metrics_current["height"] = metrics_target.get("height") or metrics_target.get("height_cm") or 175
+
     current_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_current)
     print(f"[Visualizer] Current Body: {current_body_desc}")
 
@@ -187,8 +191,6 @@ Tuple[str, str]:
         number_of_images=1,
         aspect_ratio="9:16",
         output_mime_type="image/png",
-        # Для Imagen 4 Ultra можно включить person_generation параметры, если API поддерживает,
-        # но базовый промптинг работает отлично.
     )
 
     # --- ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ CURRENT ---
