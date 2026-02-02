@@ -9,7 +9,7 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Используем указанную вами модель
+# Модель оставляем, как есть
 MODEL_NAME = "gemini-3-pro-image-preview"
 
 
@@ -24,7 +24,6 @@ def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> st
     else:
         clothing = "Plain black athletic shorts, shirtless"
 
-    # Инструкция для модели, чтобы она использовала приложенное фото
     return f"""
     Generate a hyper-realistic, high-fidelity studio photograph of the person provided in the reference image, but modify their body composition according to the metrics below.
 
@@ -55,7 +54,7 @@ def _extract_image_from_content(response) -> bytes:
         if part.inline_data and part.inline_data.data:
             return part.inline_data.data
 
-    # Если модель отказалась (сработал фильтр безопасности или вернулся текст с отказом)
+    # Если модель вернула текст (например, отказ)
     text_content = response.text if response.text else "No text explanation"
     raise RuntimeError(f"No image generated. Model response: {text_content}")
 
@@ -102,21 +101,25 @@ Tuple[str, str]:
         "muscle_pct": metrics_target.get("muscle_pct")
     }
 
-    # Конфигурация для generate_content
-    # response_modalities=["IMAGE"] заставляет модель вернуть именно картинку, а не описание
+    # Конфигурация: просим вернуть только картинку
     gen_config = types.GenerateContentConfig(
         response_modalities=["IMAGE"],
-        temperature=0.4  # Понижаем температуру для большей точности следования инструкциям
+        temperature=0.4
     )
 
     # --- Генерация Current ---
     print("Generating Current with Face Identity...")
     prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current")
 
-    # ПЕРЕДАЕМ И ТЕКСТ, И АВАТАРКУ
+    # ИСПРАВЛЕНИЕ ЗДЕСЬ: Создаем объекты Part напрямую через конструктор
     contents_curr = [
-        types.Part.from_text(prompt_curr),
-        types.Part.from_bytes(data=avatar_bytes, mime_type="image/jpeg")
+        types.Part(text=prompt_curr),
+        types.Part(
+            inline_data=types.Blob(
+                mime_type="image/jpeg",
+                data=avatar_bytes
+            )
+        )
     ]
 
     try:
@@ -135,8 +138,13 @@ Tuple[str, str]:
     prompt_tgt = _build_prompt(user.sex or "male", metrics_target_prepared, "target")
 
     contents_tgt = [
-        types.Part.from_text(prompt_tgt),
-        types.Part.from_bytes(data=avatar_bytes, mime_type="image/jpeg")
+        types.Part(text=prompt_tgt),
+        types.Part(
+            inline_data=types.Blob(
+                mime_type="image/jpeg",
+                data=avatar_bytes
+            )
+        )
     ]
 
     try:
