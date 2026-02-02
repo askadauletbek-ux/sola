@@ -9,23 +9,29 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Используем Imagen 4, так как она лучше всего понимает сложные инструкции.
-# Но мы заставим её быть "честной", а не "художественной".
-MODEL_NAME = "imagen-4.0-generate-001"
-# Модель для "чтения" лица с аватарки
+# Используем Imagen 4 (или 3, если 4 недоступна) для лучшего понимания промптов
+MODEL_NAME = "imagen-3.0-generate-001"
+# Вспомогательная модель для анализа лица
 VISION_MODEL_NAME = "gemini-2.0-flash"
 
 
 def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
     """
-    Создает "Словесный портрет" пользователя.
+    Создает точное текстовое описание лица на основе фото.
+    Это позволяет сохранить узнаваемость без использования FaceSwap.
     """
     try:
-        # Просим описать только лицо, максимально точно
+        # Промпт для vision-модели: опиши только лицо фактами
         prompt = """
-        Describe the face of the person in this image for a police sketch or medical record.
-        Focus on: exact skin tone, ethnicity, face shape, hair color/style/receding hairline, facial hair details, age.
-        Do NOT describe expression or body. Be purely descriptive and factual.
+        Describe the face of the person in this image efficiently for a character prompt.
+        Focus on:
+        1. Ethnicity and skin tone.
+        2. Exact hair style and color.
+        3. Facial hair (beard/mustache) details.
+        4. Age approximation.
+        5. Distinctive facial features (shape, eyes).
+        Output format: "A [ethnicity] man, [age] years old, with [hair] and [beard], [skin tone] skin."
+        Do NOT describe clothing or body.
         """
         response = client.models.generate_content(
             model=VISION_MODEL_NAME,
@@ -34,81 +40,82 @@ def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
                 types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes))
             ]
         )
-        return response.text.strip() if response.text else "Male, average features"
+        return response.text.strip() if response.text else "A realistic man"
     except Exception as e:
         print(f"Error analyzing face: {e}")
-        return "Male, realistic face"
+        return "A realistic man"
 
 
-def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, face_description: str) -> str:
+def _get_body_description(fat_pct: float, muscle_pct: float) -> str:
     """
-    Промпт в стиле "Medical/Documentary" для максимального реализма.
+    Возвращает честное описание тела на основе процента жира.
+    Без прикрас и "героических" пропорций.
     """
-    height = metrics.get("height", 170)
-    weight = metrics.get("weight", 70)
-    fat_pct = metrics.get("fat_pct", 20)
+    # 1. Описание жировой прослойки (СУХИЕ ФАКТЫ)
+    if fat_pct < 10:
+        fat_desc = "extremely low body fat, visible veins, shredded muscle definition, thin skin"
+    elif fat_pct < 15:
+        fat_desc = "athletic lean build, visible abs, defined muscles"
+    elif fat_pct < 20:
+        fat_desc = "fit build, flat stomach, healthy weight, slight muscle definition"
+    elif fat_pct < 25:
+        # 20-25%: Обычный мужчина, не толстый, но и не атлет
+        fat_desc = "average physique, soft midsection, no visible abs, normal build"
+    elif fat_pct < 30:
+        # 25-30%: (Твой случай 27кг/92кг = ~29%). Появляется живот.
+        fat_desc = "overweight physique, soft body, visible belly protrusion, love handles, soft arms, carrying extra weight"
+    elif fat_pct < 35:
+        fat_desc = "heavyset physique, large belly, thick waist, high body fat, round torso"
+    else:
+        fat_desc = "obese build, significant excess weight, very round body shape"
+
+    # 2. Описание мышц (Корректируем в зависимости от жира)
+    # Если жира много (>25%), мышцы под ним не видны, даже если их много.
+    if fat_pct > 25:
+        muscle_desc = "muscles hidden by fat"
+    elif muscle_pct > 42:
+        muscle_desc = "heavy muscle mass, broad build"
+    elif muscle_pct > 38:
+        muscle_desc = "athletic musculature"
+    else:
+        muscle_desc = "average muscle mass"
+
+    return f"{fat_desc}, {muscle_desc}"
+
+
+def _build_prompt(sex: str, metrics: Dict[str, float], face_description: str) -> str:
+    """
+    Собирает промпт, ориентированный на реализм.
+    """
+    height = metrics.get("height", 175)
+    weight = metrics.get("weight", 80)
+    fat_pct = metrics.get("fat_pct", 25)
     muscle_pct = metrics.get("muscle_pct", 40)
 
-    # --- ЛОГИКА ТЕЛОСЛОЖЕНИЯ (REALISM) ---
-    body_details = ""
+    # Получаем текстовое описание тела
+    body_visuals = _get_body_description(fat_pct, muscle_pct)
 
-    # Жир (Fat %)
-    if fat_pct < 12:
-        body_details = "Bodybuilder definition. Extremely low body fat. Visible striations. Vascularity. Thin skin."
-    elif fat_pct < 18:
-        body_details = "Athletic build. Visible abs. Defined muscles. Taut skin."
-    elif fat_pct < 24:
-        body_details = "Average build. Healthy weight. Soft midsection covering muscles. No visible abs."
-    elif fat_pct < 30:
-        # Твой случай (27-30%): "Skinny Fat" или просто лишний вес
-        body_details = "Overweight physique. Soft body composition. Visible belly protrusion (paunch). Love handles. Soft arms. No muscle definition. Smooth soft skin texture. Untrained look."
-    elif fat_pct < 35:
-        body_details = "Heavyset physique. Large protruding belly. Thick waist. Heavy soft limbs. High body fat percentage look."
-    else:
-        body_details = "Obese physique. Very round torso. Significant excess fat. Round soft features."
+    # Одежда: для честного прогресса лучше всего простые шорты
+    clothing = "plain black boxer briefs" if sex == 'male' else "black sports bra and panties"
 
-    # Мышцы (Muscle %)
-    # Если жир высокий (>25%), мышцы скрыты. Прямо говорим модели НЕ рисовать их.
-    if fat_pct > 25:
-        muscle_instruction = "Musculature is completely hidden by subcutaneous fat. NOT muscular looking. Soft contours."
-    elif muscle_pct > 40:
-        muscle_instruction = "Hypertrophied underlying muscle mass."
-    else:
-        muscle_instruction = "Average muscle mass."
-
-    # --- ОДЕЖДА ---
-    # Для реализма лучше "домашний" стиль, а не "спортзал"
-    if sex == 'female':
-        clothing = "black basic underwear (bra and panties)"
-    else:
-        if fat_pct > 25:
-            # Шорты под животом - маркер реализма
-            clothing = "plain black boxer briefs, shirtless"
-        else:
-            clothing = "black athletic shorts, shirtless"
-
-    # --- СБОРКА ПРОМПТА ---
-    # Используем стиль "Clinical Body Reference" (Клинический референс тела)
-    # Это переключает модель из режима "Красота" в режим "Анатомия"
+    # Промпт:
+    # 1. Лицо (из аватара)
+    # 2. Тело (из метрик)
+    # 3. Стиль (реализм, документальное фото)
     return f"""
-Clinical full-body reference photo of a {sex}.
-Face details: {face_description}.
-Biometrics: Height {height}cm, Weight {weight}kg.
+Full-body raw photo of {face_description}.
+Height: {height}cm, Weight: {weight}kg.
+BODY COMPOSITION: {body_visuals}.
+Clothing: {clothing}, shirtless.
+Pose: Standing neutral A-pose, arms at sides, facing camera.
+Background: Neutral white studio wall.
 
-PHYSICAL CONDITION (Strictly adhere to this):
-{body_details}
-{muscle_instruction}
-
-Clothing: {clothing}.
-Pose: Standing neutral A-pose, arms at sides, facing forward.
-Background: Neutral white medical wall.
-
-PHOTOGRAPHY STYLE:
-- Documentary style, raw, unflattering, realistic.
-- NOT an artistic studio shoot. NOT a fitness magazine photo.
-- Harsh realistic lighting.
-- Focus on accurate representation of body volume and texture.
-- Full body shot (Head to Shoes visible).
+STYLE:
+- Documentary body reference photography.
+- Realistic skin texture, natural lighting.
+- NOT an artistic render, NOT a fitness model photoshoot.
+- Accurate representation of body fat and shape described above.
+- Full body visible from head to toe.
 """.strip()
 
 
@@ -140,35 +147,44 @@ Tuple[str, str]:
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
 
-    # 1. Анализ лица (Один раз)
-    face_desc = _analyze_face_from_avatar(client, avatar_bytes)
+    # 1. Анализируем лицо с аватара (Один раз для обоих фото)
+    # Это гарантирует, что на обоих фото будет один и тот же человек
+    face_description = _analyze_face_from_avatar(client, avatar_bytes)
 
-    # 2. Метрики
+    # 2. Подготовка метрик CURRENT
     curr_weight = metrics_current.get("weight", 0)
     metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
+
+    # Если мышечная масса не передана, считаем грубо
     curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
     metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
 
-    tgt_data_for_prompt = {
-        "height": metrics_target.get("height_cm"),
-        "weight": metrics_target.get("weight_kg"),
-        "fat_pct": metrics_target.get("fat_pct"),
+    # 3. Подготовка метрик TARGET
+    # (Бэк может прислать разные ключи, унифицируем)
+    tgt_weight = metrics_target.get("weight_kg") or metrics_target.get("weight")
+    tgt_fat_mass = metrics_target.get("fat_mass")
+
+    # Если fat_pct нет, считаем его из массы
+    tgt_fat_pct = metrics_target.get("fat_pct")
+    if tgt_fat_pct is None and tgt_weight and tgt_fat_mass:
+        tgt_fat_pct = _compute_pct(tgt_fat_mass, tgt_weight)
+
+    tgt_data_processed = {
+        "height": metrics_target.get("height_cm") or metrics_target.get("height"),
+        "weight": tgt_weight,
+        "fat_pct": tgt_fat_pct,
         "muscle_pct": metrics_target.get("muscle_pct")
     }
 
-    # 3. Конфиг (Imagen 4)
+    # 4. Конфигурация
     config = types.GenerateImagesConfig(
         number_of_images=1,
         aspect_ratio="9:16",
         output_mime_type="image/png"
     )
 
-    # --- Генерация Current ---
-    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", face_desc)
-
-    # Добавляем жесткое негативное описание в сам промпт (так как API конфиг может не поддерживать negative_prompt)
-    prompt_curr += "\nAVOID: bodybuilding, fitness model, six pack, perfect lighting, retouching."
-
+    # --- ГЕНЕРАЦИЯ CURRENT ---
+    prompt_curr = _build_prompt(user.sex or "male", metrics_current, face_description)
     try:
         response_curr = client.models.generate_images(
             model=MODEL_NAME,
@@ -181,8 +197,8 @@ Tuple[str, str]:
     except Exception as e:
         raise RuntimeError(f"Error generating Current image: {str(e)}")
 
-    # --- Генерация Target ---
-    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target", face_desc)
+    # --- ГЕНЕРАЦИЯ TARGET ---
+    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_processed, face_description)
     try:
         response_tgt = client.models.generate_images(
             model=MODEL_NAME,
@@ -195,7 +211,7 @@ Tuple[str, str]:
     except Exception as e:
         raise RuntimeError(f"Error generating Target image: {str(e)}")
 
-    # Сохранение
+    # 5. Сохранение
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
@@ -211,7 +227,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-4-clinical"
+        provider="imagen-face-aware"
     )
     db.session.add(vis)
     db.session.commit()
