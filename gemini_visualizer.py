@@ -127,13 +127,11 @@ Tuple[str, str]:
     }
 
     # --- 2. Конфигурация Генерации ---
-    # aspect_ratio="9:16" - ГЛАВНОЕ исправление для "прыгающего" зума.
-    # safety_filter_level можно настроить, если модель блокирует голый торс (зависит от настроек аккаунта)
+    # УБРАЛИ include_rai_reasoning, так как он вызывает ошибку валидации
     config = types.GenerateImagesConfig(
         number_of_images=1,
         aspect_ratio="9:16",
-        output_mime_type="image/png",
-        include_rai_reasoning=True
+        output_mime_type="image/png"
     )
 
     # --- 3. Генерация CURRENT ---
@@ -149,7 +147,7 @@ Tuple[str, str]:
             raise RuntimeError("Imagen returned no images for Current state.")
         curr_png = response_curr.generated_images[0].image.image_bytes
     except Exception as e:
-        # Логируем ошибку, чтобы понять, если промпт заблокирован safety-фильтрами
+        # Логируем ошибку, чтобы понять детали, если что-то пойдет не так
         raise RuntimeError(f"Error generating Current image: {str(e)}")
 
     # --- 4. Генерация TARGET ---
@@ -172,7 +170,6 @@ Tuple[str, str]:
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
     return curr_filename, tgt_filename
-
 
 def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: Dict[str, float],
                   metrics_target: Dict[str, float]):
