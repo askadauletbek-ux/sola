@@ -49,11 +49,10 @@ def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> st
     else:
         clothing = "Plain black athletic shorts, shirtless"
 
-    # ИЗМЕНЕНИЕ: Добавлены жесткие инструкции по композиции (COMPOSITION & FRAMING)
     return f"""
     Generate a hyper-realistic, high-fidelity studio photograph of the person provided in the reference image, but modify their body composition according to the metrics below.
 
-    CRITICAL INSTRUCTIONS FOR CONSISTENCY:
+    CRITICAL INSTRUCTIONS:
     1. **FACE IDENTITY:** You MUST PRESERVE the face of the person from the input image exactly. It should look like the same person 1-in-1.
     2. **BODY METRICS:**
        - Height: {height}cm
@@ -61,13 +60,8 @@ def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> st
        - Body Fat: {fat_pct}% (Visual appearance: {'defined abs, vascularity' if fat_pct < 12 else 'soft outlines, no definition'}).
        - Muscle Mass: {muscle_pct}% (Visual appearance: {'muscular, broad' if muscle_pct > 40 else 'average build'}).
     3. **CLOTHING:** {clothing}.
-    4. **SETTING:** Seamless infinite white studio background (RGB 255, 255, 255). No floor textures, no shadows on the wall. Flat lighting.
-    5. **POSE:** Neutral standing pose, facing forward, arms slightly away from the sides (A-pose). Feet shoulder-width apart.
-    6. **COMPOSITION & FRAMING (VERY IMPORTANT):** - **Wide Shot / Full Body Shot.**
-       - The subject must be centered.
-       - **DO NOT CROP THE HEAD OR FEET.**
-       - **MANDATORY:** Leave significant white space above the head and below the feet.
-       - Maintain a fixed camera distance regardless of body size.
+    4. **SETTING:** Pure white studio background, professional lighting, 8k resolution, raw photo style.
+    5. **POSE:** Standing straight, full body visible (head to toe).
 
     Output ONLY the generated image.
     """
@@ -108,16 +102,20 @@ Tuple[str, str]:
     ts = int(time.time())
 
     # 1. Расчет и очистка ТЕКУЩИХ метрик
+    # safe_float спасет, даже если в словаре лежит {"weight": None}
     curr_weight = safe_float(metrics_current.get("weight"))
     curr_fat_mass = safe_float(metrics_current.get("fat_mass"))
     curr_muscle_mass = safe_float(metrics_current.get("muscle_mass"))
 
+    # Обновляем словарь чистыми данными, чтобы не упало дальше
     metrics_current["weight"] = curr_weight
 
+    # Считаем проценты, только если они не переданы
     if not metrics_current.get("fat_pct"):
         metrics_current["fat_pct"] = _compute_pct(curr_fat_mass, curr_weight)
 
     if not metrics_current.get("muscle_pct"):
+        # Эвристика: если мышц нет в данных, берем 40% от веса как дефолт для мужчины
         curr_muscle_safe = curr_muscle_mass if curr_muscle_mass > 0 else (curr_weight * 0.4)
         metrics_current["muscle_pct"] = _compute_pct(curr_muscle_safe, curr_weight)
 
@@ -131,12 +129,9 @@ Tuple[str, str]:
         "muscle_pct": safe_float(metrics_target.get("muscle_pct"))
     }
 
-    # ИЗМЕНЕНИЕ: Добавлен aspect_ratio='3:4' чтобы зафиксировать размер холста
-    # Это помогает модели не "обрезать" картинку по-разному
     gen_config = types.GenerateContentConfig(
         response_modalities=["IMAGE"],
-        temperature=0.4,
-        aspect_ratio="3:4"
+        temperature=0.4
     )
 
     # --- Генерация Current ---
