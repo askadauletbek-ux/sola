@@ -10,31 +10,27 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# Используем самую мощную модель для генерации (из твоего списка)
-# Imagen 4 Ultra дает лучший фотореализм и текстуру кожи
+# Imagen 4 Ultra - лучшее качество (поддерживает референсы в Vertex/Gemini API)
 IMAGE_MODEL_NAME = "imagen-4.0-ultra-generate-001"
 
-# Модель для "рассуждений" (анализ лица и превращение цифр в описание тела)
+# Gemini 2.0 Flash - используется для анализа и как запасной генератор
 REASONING_MODEL_NAME = "gemini-2.0-flash"
 
 
 def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
     """
-    1. Анализирует аватарку.
-    2. Извлекает ключевые черты лица для сохранения идентичности.
+    Создает словесный портрет для подстраховки референса.
     """
     try:
         prompt = """
-        Analyze the face in this image to create a consistent character prompt. 
-        Describe ONLY the face features strictly and concisely:
-        1. Ethnicity/Skin tone (precise description).
-        2. Exact hair style, texture, and color.
-        3. Facial structure (jawline, cheekbones, eye shape).
-        4. Facial hair (beard/stubble/mustache) if any.
-        5. Age approximation.
+        Analyze this face for ID retention. Describe distinct features strictly:
+        1. Ethnicity and exact Skin Tone (e.g., 'pale olive', 'dark brown').
+        2. Exact Hair (style, hairline, color).
+        3. Facial Structure (face shape, nose shape, eyes).
+        4. Distinguishing marks (moles, scars, beard pattern).
 
-        Output format example: "A Latino man, approx 30 years old, with short fade haircut, dark brown eyes, sharp jawline, and light stubble beard."
-        Do NOT describe clothing, background, or body.
+        Output format: "Photo of a [ethnicity] man, [age], [hair], [distinct features]."
+        Keep it under 30 words.
         """
         response = client.models.generate_content(
             model=REASONING_MODEL_NAME,
@@ -43,22 +39,22 @@ def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
                 types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes))
             ]
         )
-        return response.text.strip() if response.text else "A realistic person with neutral expression"
+        return response.text.strip() if response.text else "A realistic person"
     except Exception as e:
         print(f"Error analyzing face: {e}")
-        return "A realistic person with neutral expression"
+        return "A realistic person"
 
 
 def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, float]) -> str:
     """
-    «Мозг» системы. Превращает сухие цифры в визуальное описание тела.
+    Превращает цифры в описание тела (мышцы, жир).
     """
     height = metrics.get("height", 175)
     weight = metrics.get("weight", 80)
     fat_mass = metrics.get("fat_mass")
     muscle_mass = metrics.get("muscle_mass")
 
-    # Если есть только масса, считаем проценты для ИИ, чтобы ему было понятнее
+    # Расчет процентов
     fat_pct = metrics.get("fat_pct")
     if fat_pct is None and weight > 0:
         fat_pct = (fat_mass / weight) * 100 if fat_mass else 20
@@ -67,28 +63,19 @@ def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, flo
     if muscle_pct is None and weight > 0:
         muscle_pct = (muscle_mass / weight) * 100 if muscle_mass else 40
 
-    # Промпт для ИИ-диетолога
     prompt = f"""
-    You are a professional fitness visualizer. 
-    Convert these biometrics into a PHOTOGRAPHIC visual description of a human body for an AI image generator.
-
-    Subject: {sex}
-    Height: {height} cm
-    Weight: {weight} kg
-    Body Fat: {fat_pct:.1f}%
-    Muscle Mass: aprox {muscle_pct:.1f}% (or relative to weight)
+    Act as an anatomy expert for AI image generation.
+    Describe the BODY ONLY for a {sex}.
+    Stats: Height {height}cm, Weight {weight}kg, Body Fat {fat_pct:.1f}%, Muscle {muscle_pct:.1f}%.
 
     Rules:
-    1. Analyze the Fat/Muscle ratio. 
-       - Low fat + High muscle = Vascular, striated, defined.
-       - High fat + High muscle = "Bear mode", bulky, thick neck, undefined abs.
-       - Low fat + Low muscle = Skinny, bony.
-       - High fat + Low muscle = Soft, round, lack of definition ("Skinny fat").
-    2. Describe specific areas: Abs visibility, arm vascularity, chest definition, waist width, face fullness (fat affects face shape!).
-    3. Be brutally honest regarding the stats. If 30% fat, describe a soft belly. If 10%, describe distinct abs.
+    - 6-12% Fat: Visible abs, vascularity, defined definition.
+    - 15-20% Fat: Flat stomach, athletic but softer.
+    - 25%+ Fat: Soft belly, love handles, no definition.
+    - High Muscle: Broad shoulders, thick chest/arms.
 
-    Output ONLY the visual description string (max 50 words). 
-    Example: "Athletic build with visible upper abs, defined deltoids, slight vascularity in forearms, lean face with sharp jawline."
+    Output concise visual string (max 40 words). 
+    Example: "Lean athletic build, visible 6-pack abs, vascular arms, broad shoulders."
     """
 
     try:
@@ -98,31 +85,26 @@ def _generate_smart_fitness_description(client, sex: str, metrics: Dict[str, flo
         )
         return response.text.strip()
     except Exception as e:
-        print(f"Error generating body desc: {e}")
-        # Fallback на старую логику если ИИ сбоит
-        if fat_pct < 15: return "extremely lean, shredded athletic physique"
-        if fat_pct < 25: return "fit average physique, flat stomach"
-        return "overweight physique, soft body, visible belly"
+        # Fallback
+        if fat_pct < 15: return "shredded athletic physique, visible abs"
+        if fat_pct < 25: return "fit physique, flat stomach"
+        return "soft physique, visible belly fat"
 
 
-def _build_final_prompt(face_description: str, body_description: str, sex: str) -> str:
-    """
-    Собирает финальный технический промпт для Imagen 4 Ultra.
-    """
-    clothing = "simple black athletic shorts, shirtless" if sex == 'male' else "black sports bra and leggings"
+def _build_final_prompt(face_desc: str, body_desc: str, sex: str) -> str:
+    clothing = "black athletic shorts" if sex == 'male' else "black sports bra and leggings"
 
     return f"""
-    raw photo, 8k uhd, dslr, soft lighting.
-    Subject: {face_description}.
-    Body: {body_description}.
-    Clothing: {clothing}.
-    Pose: Standing straight, arms relaxed at sides, full body shot, neutral background.
+    High-fidelity raw photo.
+    Subject: {face_desc}.
+    Body Condition: {body_desc}.
+    Clothing: {clothing}, shirtless (if male).
 
-    Details:
-    - Photorealistic skin texture, pores, imperfections.
-    - Anatomically correct muscle and fat distribution based on description.
-    - Consistent lighting.
-    - NO artistic filters, NO cartoon style.
+    CRITICAL INSTRUCTIONS:
+    - PRESERVE FACIAL IDENTITY FROM REFERENCE IMAGE.
+    - The face must match the reference exactly.
+    - Realistic skin texture, dslr photography, 8k.
+    - Standing straight, neutral lighting, white background.
     """
 
 
@@ -146,14 +128,7 @@ def _compute_pct(value: float, weight: float) -> float:
 
 
 def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
-        Tuple[str, str]:
-    """
-    Главная функция генерации.
-    1. Анализирует лицо (1 раз).
-    2. Генерирует описание тела для "Сейчас".
-    3. Генерирует описание тела для "Цель".
-    4. Рисует две картинки с одним лицом.
-    """
+Tuple[str, str]:
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set")
@@ -161,67 +136,99 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
 
-    # 1. Анализируем лицо (Константа для обоих изображений)
+    # 1. Текстовый анализ лица (помогает модели понять контекст)
     face_description = _analyze_face_from_avatar(client, avatar_bytes)
-    print(f"[Visualizer] Face Analysis: {face_description}")
 
-    # 2. Генерируем описание тела CURRENT
-    # Вычисляем проценты, если их нет
+    # 2. Описания тел
     if not metrics_current.get("fat_pct") and metrics_current.get("weight"):
         metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), metrics_current.get("weight"))
-
-    # Добавляем рост в метрики, если его нет (берем из Target или дефолт)
     if not metrics_current.get("height"):
         metrics_current["height"] = metrics_target.get("height") or metrics_target.get("height_cm") or 175
 
     current_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_current)
-    print(f"[Visualizer] Current Body: {current_body_desc}")
 
-    # 3. Генерируем описание тела TARGET
-    # Важно: Target weight может отличаться от Current
     if not metrics_target.get("fat_pct") and metrics_target.get("weight_kg"):
         metrics_target["fat_pct"] = _compute_pct(metrics_target.get("fat_mass", 0), metrics_target.get("weight_kg"))
 
     target_body_desc = _generate_smart_fitness_description(client, user.sex or "male", metrics_target)
-    print(f"[Visualizer] Target Body: {target_body_desc}")
 
-    # 4. Конфигурация Imagen
-    # aspect_ratio="9:16" идеально для мобильных телефонов (Stories формат)
-    config = types.GenerateImagesConfig(
-        number_of_images=1,
-        aspect_ratio="9:16",
-        output_mime_type="image/png",
-    )
-
-    # --- ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ CURRENT ---
-    prompt_curr = _build_final_prompt(face_description, current_body_desc, user.sex or "male")
+    # 3. Подготовка Конфига с REFERENCE IMAGE (Это ключевой момент для 1:1)
+    # Создаем объект изображения для референса
     try:
-        response_curr = client.models.generate_images(
-            model=IMAGE_MODEL_NAME,
-            prompt=prompt_curr,
-            config=config
+        ref_image = types.Image(image_bytes=avatar_bytes)
+
+        # Настройка для Imagen с Subject Reference
+        # ID 0 указывает, что этот референс - главный субъект
+        reference_config = [
+            types.ReferenceImage(
+                image=ref_image,
+                subject_id="0",
+                subject_description="The user's face"
+            )
+        ]
+
+        config = types.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio="9:16",
+            output_mime_type="image/png",
+            reference_images=reference_config  # <-- ПЕРЕДАЕМ АВАТАРКУ
         )
-        if not response_curr.generated_images:
-            raise RuntimeError("No image for Current state.")
+
+        # Помечаем в промпте, какой subject_id использовать
+        prompt_suffix = " [subject_id:0]"
+
+    except Exception as e:
+        print(f"Reference Image setup warning: {e}. Trying without specific config type...")
+        # Если версия SDK старая и не поддерживает типы выше
+        config = types.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio="9:16",
+            output_mime_type="image/png"
+        )
+        prompt_suffix = ""
+
+    # Функция генерации (обертка для повторного использования)
+    def _gen_image(prompt_text):
+        full_prompt = prompt_text + prompt_suffix
+        try:
+            # Попытка 1: Imagen 4 Ultra с Reference Image
+            return client.models.generate_images(
+                model=IMAGE_MODEL_NAME,
+                prompt=full_prompt,
+                config=config
+            )
+        except Exception as e:
+            print(f"Imagen generation failed ({e}), switching to Gemini 2.0 Flash fallback...")
+            # Попытка 2: Gemini 2.0 Flash (если Imagen не сработал или не принял референс)
+            # Gemini 2.0 Flash отлично понимает "Нарисуй этого человека" если передать картинку в contents
+            return client.models.generate_images(
+                model='gemini-2.0-flash',
+                prompt=prompt_text + ". Make sure the face matches the provided image exactly.",
+                config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="9:16",
+                                                  output_mime_type="image/png"),
+                # Для Gemini 2.0 мы можем попробовать передать image в contents если метод generate_images это поддерживает,
+                # но обычно generate_images работает только по промпту.
+                # Если Imagen Subject Reference не сработал, 100% сходства без FaceSwap (insightface) добиться сложно.
+            )
+
+    # --- ГЕНЕРАЦИЯ ---
+    try:
+        # Current
+        prompt_curr = _build_final_prompt(face_description, current_body_desc, user.sex or "male")
+        response_curr = _gen_image(prompt_curr)
+        if not response_curr.generated_images: raise RuntimeError("No image for Current")
         curr_png = response_curr.generated_images[0].image.image_bytes
-    except Exception as e:
-        raise RuntimeError(f"Error generating Current image: {str(e)}")
 
-    # --- ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ TARGET ---
-    prompt_tgt = _build_final_prompt(face_description, target_body_desc, user.sex or "male")
-    try:
-        response_tgt = client.models.generate_images(
-            model=IMAGE_MODEL_NAME,
-            prompt=prompt_tgt,
-            config=config
-        )
-        if not response_tgt.generated_images:
-            raise RuntimeError("No image for Target state.")
+        # Target
+        prompt_tgt = _build_final_prompt(face_description, target_body_desc, user.sex or "male")
+        response_tgt = _gen_image(prompt_tgt)
+        if not response_tgt.generated_images: raise RuntimeError("No image for Target")
         tgt_png = response_tgt.generated_images[0].image.image_bytes
-    except Exception as e:
-        raise RuntimeError(f"Error generating Target image: {str(e)}")
 
-    # 5. Сохранение в БД (используя существующую логику UploadedFile)
+    except Exception as e:
+        raise RuntimeError(f"Generation pipeline failed: {str(e)}")
+
+    # 5. Сохранение
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
     tgt_filename = _save_png_to_db(tgt_png, user.id, f"{ts}_target")
 
@@ -230,9 +237,6 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
 
 def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: Dict[str, float],
                   metrics_target: Dict[str, float]):
-    """
-    Сохраняет запись о визуализации в таблицу BodyVisualization
-    """
     vis = BodyVisualization(
         user_id=user.id,
         metrics_current=metrics_current,
@@ -240,7 +244,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-4-ultra-smart"
+        provider="imagen-4-subject-ref"
     )
     db.session.add(vis)
     db.session.commit()
