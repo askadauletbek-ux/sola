@@ -9,7 +9,7 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-MODEL_NAME = "gemini-3-pro-image-preview"
+MODEL_NAME = "gemini-3-flash-preview"
 
 
 # --- НОВАЯ ЗАЩИТНАЯ ФУНКЦИЯ ---
