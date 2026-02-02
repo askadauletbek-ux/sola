@@ -11,7 +11,7 @@ from models import BodyVisualization, UploadedFile
 
 # ИСПОЛЬЗУЕМ IMAGEN 3 ДЛЯ ГЕНЕРАЦИИ (High Fidelity)
 # Убедитесь, что 'imagen-3.0-generate-001' включена в Google Cloud Console
-MODEL_NAME = "imagen-3.0-generate-001"
+MODEL_NAME = "imagen-4.0-generate-001"
 
 
 def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> str:
