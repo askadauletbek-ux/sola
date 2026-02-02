@@ -9,68 +9,103 @@ from google.genai import types
 from extensions import db
 from models import BodyVisualization, UploadedFile
 
-# --- ИСПОЛЬЗУЕМ ТОПОВУЮ МОДЕЛЬ ИЗ ВАШЕГО СПИСКА (IMAGEN 4) ---
+# Основная модель для генерации (Лучшее качество)
 MODEL_NAME = "imagen-4.0-generate-001"
+# Вспомогательная модель для считывания лица с аватарки (Быстрая)
+VISION_MODEL_NAME = "gemini-2.0-flash"
 
 
-def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str) -> str:
+def _analyze_face_from_avatar(client, avatar_bytes: bytes) -> str:
     """
-    Промпт адаптирован для Imagen 4.
-    Эта модель отлично понимает естественный язык и детали композиции.
+    Imagen 4 не видит картинки, поэтому мы используем Gemini,
+    чтобы описать лицо пользователя текстом и передать это описание в Imagen.
+    """
+    try:
+        prompt = """
+        Analyze the face in this image. Describe ONLY the physical facial features to recreate this person.
+        Include: ethnicity, skin tone, exact hair style and color, facial hair (beard/mustache details), eye color, and apparent age.
+        Be concise (max 30 words). Do NOT describe clothing or body.
+        Example output: "Latino male, short buzz cut dark hair, thick stubble beard, tan skin, brown eyes, approx 30 years old."
+        """
+        response = client.models.generate_content(
+            model=VISION_MODEL_NAME,
+            contents=[
+                types.Part(text=prompt),
+                types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes))
+            ]
+        )
+        return response.text.strip() if response.text else "A realistic human face"
+    except Exception as e:
+        print(f"Error analyzing face: {e}")
+        return "A realistic human face"
+
+
+def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, face_description: str) -> str:
+    """
+    Промпт с исправленной логикой жира и добавлением описания лица.
     """
     height = metrics.get("height", 170)
     weight = metrics.get("weight", 70)
     fat_pct = metrics.get("fat_pct", 20)
     muscle_pct = metrics.get("muscle_pct", 40)
 
-    # 1. Описание телосложения
+    # --- 1. ЖЕСТКАЯ ЛОГИКА ТЕЛОСЛОЖЕНИЯ (REALISM FIX) ---
     body_features = []
 
-    # Жировая прослойка
+    # Жировая прослойка (Fat %)
+    # Исправлено: 25-30% жира теперь реально выглядят как лишний вес, а не как мышцы.
     if fat_pct < 10:
-        body_features.append("extremely shredded, vascular, thin skin, visible muscle striations")
+        body_features.append("extremely shredded, visible veins, thin skin, striated muscle")
     elif fat_pct < 15:
-        body_features.append("very lean, defined six-pack abs, athletic cut")
-    elif fat_pct < 22:
-        body_features.append("fit, flat stomach, healthy muscle definition")
+        body_features.append("athletic lean, visible six-pack abs, sharp definition")
+    elif fat_pct < 20:
+        body_features.append("fit, flat stomach, faint muscle outline, no love handles")
+    elif fat_pct < 25:
+        body_features.append("average build, soft stomach, no visible abs, smooth skin")
     elif fat_pct < 30:
-        body_features.append("soft body composition, smooth contours, average build")
+        # Твой случай (27.7кг жира): Мягкое тело, животик
+        body_features.append(
+            "overweight body type, soft belly, visible love handles, round face, soft arms, no muscle definition")
+    elif fat_pct < 35:
+        body_features.append("heavyset build, protruding belly, thick waist, soft body composition")
     else:
-        body_features.append("heavy build, rounded contours, visible soft tissue")
+        body_features.append("obese build, significant body fat, very round shape")
 
-    # Мышечная масса
-    if muscle_pct > 42:
-        body_features.append("heavy musculature, bodybuilder physique, broad shoulders")
+    # Мышечная масса (Muscle %)
+    # Если жира много (>25%), мы приглушаем описание мышц, чтобы не было конфликта
+    if muscle_pct > 42 and fat_pct < 25:
+        body_features.append("massive bodybuilder musculature, broad shoulders")
+    elif muscle_pct > 36 and fat_pct < 30:
+        body_features.append("broad frame, naturally strong build under fat")  # Мышцы под жиром
     elif muscle_pct > 36:
-        body_features.append("athletic build, well-developed muscles")
+        body_features.append("athletic musculature")
     else:
-        body_features.append("average musculature, not bulky")
+        body_features.append("average musculature")
 
     body_desc_str = ", ".join(body_features)
 
-    # 2. Одежда
+    # --- 2. Одежда ---
     if sex == 'female':
         clothing = "wearing a black minimalist sports bra and black leggings"
     else:
         clothing = "wearing black athletic shorts, shirtless, bare torso"
 
-    # 3. Сборка промпта
-    # Imagen 4 хорошо понимает инструкции по кадрированию.
+    # --- 3. Сборка промпта ---
     return f"""
-Full-body studio photograph of a {sex}, height {height}cm, weight {weight}kg.
-Physique details: {body_desc_str}.
+Full-body studio photograph of a {sex}, {face_description}.
+Height: {height}cm, Weight: {weight}kg.
+Body Condition: {body_desc_str}.
 Clothing: {clothing}.
 Pose: Standing in a neutral anatomical A-pose, arms relaxed at sides, looking at camera.
 Background: Plain white studio background.
 
-COMPOSITION REQUIRED:
-- Wide shot.
-- Full body visible from head to toe.
-- Feet and shoes MUST be visible.
-- Leave empty white space above the head.
-- Do NOT crop the head or feet.
+COMPOSITION RULES:
+- Wide shot (Full Body).
+- Head, feet, and shoes MUST be fully visible.
+- Leave white space above the head.
+- Do NOT crop.
 
-Style: 8k, hyper-realistic, highly detailed skin texture, professional studio lighting.
+Style: 8k, hyper-realistic, raw photograph, highly detailed skin texture.
 """.strip()
 
 
@@ -102,6 +137,10 @@ Tuple[str, str]:
     client = genai.Client(api_key=api_key)
     ts = int(time.time())
 
+    # 1. Считываем лицо с аватарки (Один раз для обоих фото)
+    face_description = _analyze_face_from_avatar(client, avatar_bytes)
+    # Можно добавить "same person as described" для усиления
+
     # --- Подготовка метрик ---
     curr_weight = metrics_current.get("weight", 0)
     metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
@@ -116,8 +155,6 @@ Tuple[str, str]:
     }
 
     # --- Конфигурация Генерации ---
-    # aspect_ratio="9:16" - Важно для фото в полный рост
-    # УБРАН include_rai_reasoning, чтобы избежать ошибки валидации
     config = types.GenerateImagesConfig(
         number_of_images=1,
         aspect_ratio="9:16",
@@ -125,7 +162,7 @@ Tuple[str, str]:
     )
 
     # --- Генерация Current ---
-    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current")
+    prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", face_description)
     try:
         response_curr = client.models.generate_images(
             model=MODEL_NAME,
@@ -136,11 +173,10 @@ Tuple[str, str]:
             raise RuntimeError("Imagen returned no images for Current state.")
         curr_png = response_curr.generated_images[0].image.image_bytes
     except Exception as e:
-        # Логируем ошибку с именем модели
-        raise RuntimeError(f"Error generating Current image ({MODEL_NAME}): {str(e)}")
+        raise RuntimeError(f"Error generating Current image: {str(e)}")
 
     # --- Генерация Target ---
-    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target")
+    prompt_tgt = _build_prompt(user.sex or "male", tgt_data_for_prompt, "target", face_description)
     try:
         response_tgt = client.models.generate_images(
             model=MODEL_NAME,
@@ -151,7 +187,7 @@ Tuple[str, str]:
             raise RuntimeError("Imagen returned no images for Target state.")
         tgt_png = response_tgt.generated_images[0].image.image_bytes
     except Exception as e:
-        raise RuntimeError(f"Error generating Target image ({MODEL_NAME}): {str(e)}")
+        raise RuntimeError(f"Error generating Target image: {str(e)}")
 
     # Сохранение
     curr_filename = _save_png_to_db(curr_png, user.id, f"{ts}_current")
@@ -169,7 +205,7 @@ def create_record(user, curr_filename: str, tgt_filename: str, metrics_current: 
         image_current_path=curr_filename,
         image_target_path=tgt_filename,
         status="done",
-        provider="imagen-4"
+        provider="imagen-4-face-aware"
     )
     db.session.add(vis)
     db.session.commit()
