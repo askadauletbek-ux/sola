@@ -10,7 +10,7 @@ from extensions import db
 from models import BodyVisualization, UploadedFile
 
 # Используем Imagen 4 (или 3, если 4 недоступна) для лучшего понимания промптов
-MODEL_NAME = "imagen-3.0-generate-001"
+MODEL_NAME = "imagen-4.0-generate-001"
 # Вспомогательная модель для анализа лица
 VISION_MODEL_NAME = "gemini-2.0-flash"
 
