@@ -2256,32 +2256,15 @@ def analyze_scales_photo():
         return jsonify({"success": False, "error": f"Ошибка AI-анализа: {e}"}), 500
 
 
-# В файле app.py
-
 def _calculate_target_metrics(user: User, metrics_current: dict) -> dict:
     """
     Рассчитывает целевые показатели ("Точка Б") на основе переданного веса, роста и процента жира.
-    Безопасно обрабатывает None значения.
     """
     try:
-        # Вспомогательная функция для безопасного получения float
-        def get_safe_float(key, default_val):
-            val = metrics_current.get(key)
-            if val is None:
-                return default_val
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                return default_val
-
-        # Используем безопасное получение (если AI вернул null, берем дефолт)
-        height_cm = get_safe_float("height", 175.0)
-        weight_curr = get_safe_float("weight", 80.0)
-
+        # Исправление: используем 'or', чтобы обработать случай, когда значение равно None
+        height_cm = float(metrics_current.get("height") or 170)
+        weight_curr = float(metrics_current.get("weight") or 70)
         height_m = height_cm / 100.0
-
-        # Защита от деления на ноль, если рост пришел кривой
-        if height_m <= 0: height_m = 1.75
 
         # Целевой вес на основе здорового ИМТ 21.5
         target_weight = 21.5 * (height_m * height_m)
@@ -2303,9 +2286,9 @@ def _calculate_target_metrics(user: User, metrics_current: dict) -> dict:
             "muscle_pct": (target_muscle_mass / target_weight) * 100
         }
     except Exception as e:
-        print(f"[calculate_target_metrics] FAILED: {e}")
-        # Возвращаем текущие метрики как фоллбек, чтобы не крашить сервер
+        app.logger.error(f"[calculate_target_metrics] FAILED: {e}")
         return metrics_current.copy()
+
 
 @app.route('/api/onboarding/generate_visualization', methods=['POST'])
 @login_required
