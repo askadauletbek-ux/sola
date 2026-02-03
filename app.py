@@ -776,6 +776,7 @@ def _auto_migrate_diet_schema():
 
     _ensure_column("user", "streak_nutrition", "INTEGER DEFAULT 0")
     _ensure_column("user", "streak_activity", "INTEGER DEFAULT 0")
+    _ensure_column("user", "target_calories", "INTEGER")  # <--- Smart Target
     _ensure_column("meal_logs", "is_flagged", "BOOLEAN DEFAULT FALSE")
     _ensure_column("meal_logs", "created_at", "TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP)")
 
@@ -3391,16 +3392,41 @@ def confirm_analysis():
                 if not user.initial_body_analysis_id:
                     user.initial_body_analysis_id = new_analysis.id
 
-                # Логика AI комментария
-                ai_comment_text = None
-                if last_analysis:
-                    try:
-                        ai_comment_text = generate_progress_commentary(user, last_analysis, new_analysis)
-                        if ai_comment_text: new_analysis.ai_comment = ai_comment_text
-                    except Exception as e:
-                        print(f"AI Comment generation warning: {e}")
+                    # Логика AI комментария
+                    ai_comment_text = None
+                    if last_analysis:
+                        try:
+                            ai_comment_text = generate_progress_commentary(user, last_analysis, new_analysis)
+                            if ai_comment_text: new_analysis.ai_comment = ai_comment_text
+                        except Exception as e:
+                            print(f"AI Comment generation warning: {e}")
 
-                # --- SQUAD SCORING: HEALTHY PROGRESS (30 pts) ---
+                    # --- РАСЧЕТ SMART ЦЕЛИ (BMR + Activity - Deficit) ---
+                    try:
+                        # 1. BMR: Берем из весов или считаем формулу
+                        bmr = new_analysis.metabolism
+                        if not bmr and new_analysis.weight and new_analysis.height:
+                            # Mifflin-St Jeor
+                            age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
+                            # Для женщин -161, для мужчин +5
+                            s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
+                            bmr = (10 * new_analysis.weight) + (6.25 * new_analysis.height) - (5 * age) + s
+
+                        if bmr:
+                            # 2. Формула: BMR * 1.2 (сидячий) * 0.85 (дефицит 15%)
+                            smart_target = int((bmr * 1.2) * 0.85)
+
+                            # 3. Сохраняем в профиль
+                            user.target_calories = smart_target
+
+                            # 4. Обновляем текущую диету для синхронизации, чтобы Dashboard обновился сразу
+                            active_diet = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).first()
+                            if active_diet:
+                                active_diet.total_kcal = smart_target
+                    except Exception as e:
+                        print(f"Smart Target Error: {e}")
+
+                    # --- SQUAD SCORING: HEALTHY PROGRESS (30 pts) ---
                 if last_analysis and last_analysis.weight and new_analysis.weight:
                     prev_w = float(last_analysis.weight)
                     curr_w = float(new_analysis.weight)
