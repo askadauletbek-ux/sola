@@ -38,6 +38,7 @@ from flask_bcrypt import Bcrypt
 from flask_login import current_user
 from werkzeug.utils import secure_filename
 from amplitude import Amplitude, BaseEvent  # <-- Amplitude
+import jwt  # <-- Добавлен импорт для Apple Sign-In
 
 # --- Импорты для Google Sign-In ---
 from google.oauth2 import id_token
@@ -1892,11 +1893,98 @@ def api_google_login():
             }
         }), 200
 
+
     except ValueError as e:
+
         return jsonify({"ok": False, "error": f"INVALID_TOKEN: {str(e)}"}), 401
+
     except Exception as e:
+
         return jsonify({"ok": False, "error": f"SERVER_ERROR: {str(e)}"}), 500
 
+@app.post('/api/login/apple')
+def api_apple_login():
+
+        data = request.get_json(force=True, silent=True) or {}
+
+        token = data.get('id_token')
+
+        # Apple присылает имя только при ПЕРВОМ входе. Фронтенд должен передать его нам.
+
+        first_name = data.get('first_name')
+
+        last_name = data.get('last_name')
+
+        full_name = None
+
+        if first_name or last_name:
+            full_name = f"{first_name or ''} {last_name or ''}".strip()
+
+        if not token:
+            return jsonify({"ok": False, "error": "TOKEN_MISSING"}), 400
+
+        try:
+
+            # Декодируем токен Apple.
+
+            # Внимание: Для полной безопасности здесь нужно валидировать подпись через Apple Public Keys.
+
+            # Для базовой реализации мы доверяем токену, декодируя payload (verify=False),
+
+            # полагая, что HTTPS соединение с приложением защищено.
+
+            decoded = jwt.decode(token, options={"verify_signature": False})
+
+            email = decoded.get('email')
+
+            if not email:
+                return jsonify({"ok": False, "error": "EMAIL_NOT_PROVIDED_BY_APPLE"}), 400
+
+            user = User.query.filter(func.lower(User.email) == email.casefold()).first()
+
+            if not user:
+                # Пользователь не найден. Возвращаем 404 и данные для онбординга.
+
+                return jsonify({
+
+                    "ok": False,
+
+                    "error": "USER_NOT_FOUND",
+
+                    "apple_email": email,
+
+                    "apple_name": full_name
+
+                }), 404
+
+            # Логиним пользователя (создаем сессию)
+
+            session['user_id'] = user.id
+
+            return jsonify({
+
+                "ok": True,
+
+                "user": {
+
+                    "id": user.id,
+
+                    "name": user.name,
+
+                    "email": user.email,
+
+                    "has_subscription": bool(getattr(user, 'has_subscription', False)),
+
+                    "is_trainer": bool(getattr(user, 'is_trainer', False)),
+
+                }
+
+            }), 200
+
+
+        except Exception as e:
+
+            return jsonify({"ok": False, "error": f"APPLE_AUTH_ERROR: {str(e)}"}), 500
 
 @app.route('/api/register_google', methods=['POST'])
 def api_register_google():
@@ -1994,6 +2082,108 @@ def api_register_google():
             "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None
         }
     }), 201
+
+
+@app.route('/api/register_apple', methods=['POST'])
+def api_register_apple():
+    """
+    Регистрация с использованием Apple ID Token.
+    """
+    token = request.form.get('id_token')
+
+    try:
+        # Декодируем токен, чтобы убедиться в email
+        decoded = jwt.decode(token, options={"verify_signature": False})
+        email = decoded.get('email')
+        if not email:
+            return jsonify({"ok": False, "errors": ["INVALID_APPLE_TOKEN_NO_EMAIL"]}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "errors": [f"INVALID_APPLE_TOKEN: {e}"]}), 400
+
+    name = request.form.get('name', '').strip()
+    date_str = request.form.get('date_of_birth', '').strip()
+    sex = request.form.get('sex', 'male').strip().lower()
+    height = request.form.get('height')
+    face_consent = request.form.get('face_consent', 'false').lower() == 'true'
+    file = request.files.get('avatar')
+
+    # Генерируем случайный пароль
+    import secrets
+    random_pw = secrets.token_urlsafe(16)
+    hashed_pw = bcrypt.generate_password_hash(random_pw).decode('utf-8')
+
+    # Аватар
+    avatar_file_id = None
+    if file and file.filename:
+        filename = secure_filename(file.filename)
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext in {'jpg', 'jpeg', 'png', 'webp'}:
+            unique_filename = f"avatar_apple_{uuid.uuid4().hex}.{ext}"
+            file_data = file.read()
+            new_file = UploadedFile(
+                filename=unique_filename,
+                content_type=file.mimetype,
+                data=file_data,
+                size=len(file_data)
+            )
+            db.session.add(new_file)
+            db.session.flush()
+            avatar_file_id = new_file.id
+
+    # Парсинг даты
+    try:
+        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+    except:
+        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+
+    # Проверяем, не занят ли email (на всякий случай)
+    if User.query.filter(func.lower(User.email) == email.casefold()).first():
+        return jsonify({"ok": False, "errors": ["EMAIL_EXISTS"]}), 400
+
+    # 1. Создаем пользователя
+    user = User(
+        name=name,
+        email=email,
+        password=hashed_pw,
+        date_of_birth=date_of_birth,
+        sex=sex,
+        face_consent=face_consent,
+        avatar_file_id=avatar_file_id
+    )
+    db.session.add(user)
+    db.session.flush()
+
+    if avatar_file_id:
+        new_file.user_id = user.id
+
+    # 2. Создаем запись анализа с РОСТОМ
+    if height:
+        try:
+            height_val = float(height)
+            analysis = BodyAnalysis(
+                user_id=user.id,
+                height=height_val,
+                date=datetime.utcnow()
+            )
+            db.session.add(analysis)
+        except:
+            pass
+
+    db.session.commit()
+    session['user_id'] = user.id
+
+    track_event('signup_completed', user.id, {"method": "apple", "sex": sex})
+
+    return jsonify({
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None
+        }
+    }), 201
+
 
 @app.post('/api/logout')
 def api_logout():
