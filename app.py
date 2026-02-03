@@ -803,6 +803,7 @@ def _auto_migrate_onboarding_schema():
 
     # === НОВОЕ ПОЛЕ ДЛЯ ОНБОРДИНГА V2 (ПО ТЗ) ===
     _ensure_column("user", "onboarding_v2_complete", "BOOLEAN DEFAULT FALSE")
+    _ensure_column("user", "scanner_onboarding_seen", "BOOLEAN DEFAULT FALSE")
 
     # --- НОВАЯ СТРОКА ---
     _ensure_column("user", "fcm_device_token", "TEXT")  # Добавляем колонку для FCM
@@ -1386,6 +1387,7 @@ def app_profile_data():
         "current_streak": getattr(user, "current_streak", 0),  # Это ОБЩИЙ стрик
         "streak_nutrition": getattr(user, "streak_nutrition", 0),
         "streak_activity": getattr(user, "streak_activity", 0),
+        "scanner_onboarding_seen": bool(getattr(user, "scanner_onboarding_seen", False)),
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
@@ -1812,6 +1814,17 @@ def app_analyze_meal_photo():
     Она просто вызывает существующую функцию, но требует @login_required
     """
     return analyze_meal_photo()
+
+@app.route('/api/mark_scanner_seen', methods=['POST'])
+@login_required
+def mark_scanner_seen():
+    try:
+        user = get_current_user()
+        user.scanner_onboarding_seen = True
+        db.session.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.post('/api/login')

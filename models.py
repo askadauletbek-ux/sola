@@ -67,6 +67,7 @@ class User(db.Model):
     streak_nutrition = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     streak_activity = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     target_calories = db.Column(db.Integer, default=0, server_default='0', nullable=False)
+    scanner_onboarding_seen = db.Column(db.Boolean, default=False)
     # отношения
     subscription = db.relationship(
         'Subscription',
