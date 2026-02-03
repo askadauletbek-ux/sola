@@ -3347,17 +3347,7 @@ def confirm_analysis():
                 last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
                     BodyAnalysis.timestamp.desc()).first()
 
-                # Если нужно отключить проверку 7 дней для тестов, закомментируйте блок ниже
-                if user.initial_body_analysis_id and last_analysis:
-                    prev_ts = last_analysis.timestamp.replace(
-                        tzinfo=UTC) if last_analysis.timestamp.tzinfo is None else last_analysis.timestamp
-                    # Разрешаем обновление, если это "пустой" замер (без веса), иначе проверяем дни
-                    if last_analysis.weight and last_analysis.weight > 0:
-                        if (datetime.now(UTC) - prev_ts).days < 7:
-                            print("DEBUG: Too frequent analysis")
-                            return jsonify(
-                                {"success": False, "error": "Слишком часто. Следующий замер через неделю."}), 400
-
+                # Ограничение удалено
                 # 3. Создаем запись
                 new_analysis = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
 
@@ -5986,7 +5976,7 @@ def deficit_history():
 
         day_analysis = analysis_map.get(current_day)
 
-        history_data.append({
+        item = {
             "date": current_day.strftime('%d.%m.%Y'),
             "consumed": consumed,
             "base_metabolism": metabolism,
@@ -5996,7 +5986,29 @@ def deficit_history():
             "is_measurement_day": day_analysis is not None,
             "weight": day_analysis.weight if day_analysis else None,
             "bmi": day_analysis.bmi if day_analysis else None
-        })
+        }
+
+        if day_analysis:
+            # Считаем процент жира, если есть данные массы и веса
+            fat_perc = 0.0
+            if day_analysis.weight and day_analysis.weight > 0 and day_analysis.fat_mass:
+                fat_perc = (day_analysis.fat_mass / day_analysis.weight) * 100
+
+            # Добавляем детальные метрики для экрана BodyAnalysisDetailsPage
+            item.update({
+                "timestamp": day_analysis.timestamp.isoformat(),
+                "body_age": day_analysis.body_age,
+                "fat_mass_kg": day_analysis.fat_mass,
+                "body_fat_percentage": fat_perc,
+                "muscle_mass_kg": day_analysis.muscle_mass,
+                "water_percentage": day_analysis.body_water,
+                "visceral_fat_level": day_analysis.visceral_fat_rating,
+                "bone_mass_kg": day_analysis.bone_mineral_percentage,
+                "bmr_kcal": day_analysis.metabolism,
+                "protein_percentage": day_analysis.protein_percentage
+            })
+
+        history_data.append(item)
 
     # --- ВАЖНОЕ ИЗМЕНЕНИЕ: Разворачиваем список, чтобы новые были сверху ---
     history_data.reverse()
