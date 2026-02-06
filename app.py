@@ -2059,8 +2059,8 @@ def api_register_google():
         email=email,
         password=hashed_pw,
         date_of_birth=date_of_birth,
-        height=user_height,
         sex=sex,
+        height=user_height,
         face_consent=face_consent,
         avatar_file_id=avatar_file_id
     )
