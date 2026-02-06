@@ -3256,9 +3256,15 @@ def upload_analysis():
         content = response_metrics.choices[0].message.content.strip()
         result = json.loads(content)
 
+        # --- FIX: Если рост не распознан, берем из профиля (user.height) ---
+        if not result.get('height') and user.height:
+            result['height'] = user.height
+        # -------------------------------------------------------------------
+
         # Если данные не найдены, пытаемся взять их из последнего анализа (чтобы не сбрасывать прогресс в 0)
         last_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
         if last_analysis:
+            # Если рост всё ещё не найден (нет ни в AI, ни в user.height), пробуем историю
             if not result.get('height') and last_analysis.height:
                 result['height'] = last_analysis.height
             if not result.get('weight') and last_analysis.weight:
