@@ -31,6 +31,7 @@
       <change beforePath="$PROJECT_DIR$/../SalesJourney/webhooks.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SalesJourney/webhooks.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/.env" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/alembic.ini" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/alembic.ini" afterDir="false" />

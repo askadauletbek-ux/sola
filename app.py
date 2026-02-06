@@ -2334,18 +2334,31 @@ def api_register_v2():
         avatar_file_id = new_file.id
 
         # 4. Создаем пользователя
+        # 4. Создаем пользователя
         hashed_pw = bcrypt.generate_password_hash(password).decode('utf-8')
+
+        # Обработка роста
+        height_val = request.form.get('height')
+        if height_val:
+            try:
+                height_val = int(float(height_val))
+            except:
+                height_val = None
+        else:
+            height_val = None
+
         user = User(
             name=name,
             email=email,
             password=hashed_pw,
             date_of_birth=date_of_birth,
             sex=sex,
+            height=height_val,  # <--- Сохраняем рост прямо в User
             face_consent=face_consent,
             avatar_file_id=avatar_file_id
         )
         db.session.add(user)
-        db.session.commit()  # Коммитим пользователя
+        db.session.flush()  # Получаем ID пользователя
 
         # 5. Привязываем ID пользователя к файлу
         new_file.user_id = user.id
@@ -3365,7 +3378,12 @@ def confirm_analysis():
                 new_analysis.fat_mass = get_val('fat_mass')
                 new_analysis.metabolism = get_val('metabolism')
                 new_analysis.weight = get_val('weight')
-                new_analysis.height = get_val('height')
+
+                # Обновляем рост и в анализе, и в профиле
+                h_val = get_val('height')
+                new_analysis.height = h_val
+                if h_val and h_val > 0:
+                    user.height = int(h_val)  # Синхронизируем с User
 
                 # Заполняем остальные поля
                 new_analysis.body_age = get_val('body_age')

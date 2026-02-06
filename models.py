@@ -68,6 +68,8 @@ class User(db.Model):
     streak_activity = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     target_calories = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     scanner_onboarding_seen = db.Column(db.Boolean, default=False)
+    height = db.Column(db.Integer, nullable=True)  # Рост в см
+
     # отношения
     subscription = db.relationship(
         'Subscription',
@@ -94,10 +96,8 @@ class User(db.Model):
     def latest_analysis(self):
         return self._get_latest_analysis()
 
-    @property
-    def height(self):
-        a = self._get_latest_analysis()
-        return a.height if a else None
+        # --- НОВОЕ ПОЛЕ ---
+        # ------------------
 
     @property
     def weight(self):
