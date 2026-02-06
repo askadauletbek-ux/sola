@@ -770,6 +770,8 @@ def _auto_migrate_diet_schema():
     # === Новое поле для фиксации веса ===
     _ensure_column("user", "start_weight", "FLOAT")
 
+    _ensure_column("user", "height", "INTEGER")  # <--- Добавлено
+
     # === Новые поля пользователя для визуализаций ===
     _ensure_column("user", "sex", "TEXT DEFAULT 'male'")
     _ensure_column("user", "face_consent", "BOOLEAN DEFAULT FALSE")
@@ -2057,6 +2059,7 @@ def api_register_google():
         email=email,
         password=hashed_pw,
         date_of_birth=date_of_birth,
+        height=user_height,
         sex=sex,
         face_consent=face_consent,
         avatar_file_id=avatar_file_id
