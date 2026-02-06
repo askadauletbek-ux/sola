@@ -1383,10 +1383,15 @@ def app_profile_data():
         "id": user.id,
         "name": user.name,
         "email": user.email,
+        # --- ДОБАВЛЯЕМ ЭТИ СТРОКИ ---
+        "height": user.height,
+        "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+        "gender": user.sex,  # Фронтенд ищет ключ 'gender', а в БД поле называется 'sex'
+        # ----------------------------
         "has_subscription": bool(getattr(user, 'has_subscription', False)),
         "is_trainer": bool(getattr(user, 'is_trainer', False)),
         "avatar_filename": user.avatar.filename if user.avatar else None,
-        "current_streak": getattr(user, "current_streak", 0),  # Это ОБЩИЙ стрик
+        "current_streak": getattr(user, "current_streak", 0),
         "streak_nutrition": getattr(user, "streak_nutrition", 0),
         "streak_activity": getattr(user, "streak_activity", 0),
         "scanner_onboarding_seen": bool(getattr(user, "scanner_onboarding_seen", False)),
@@ -2248,6 +2253,7 @@ def api_me():
             'onboarding_v2_complete': bool(getattr(u, 'onboarding_v2_complete', False)),
             'squad_status': getattr(u, 'squad_status', 'none'),
             "height": u.height,
+            "gender": u.sex,
             "current_streak": getattr(u, "current_streak", 0),
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
