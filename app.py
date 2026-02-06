@@ -2247,6 +2247,7 @@ def api_me():
             'onboarding_complete': bool(getattr(u, 'onboarding_complete', False)),
             'onboarding_v2_complete': bool(getattr(u, 'onboarding_v2_complete', False)),
             'squad_status': getattr(u, 'squad_status', 'none'),
+            "height": u.height,
             "current_streak": getattr(u, "current_streak", 0),
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
@@ -5881,8 +5882,8 @@ def weekly_summary():
 
     # 2. Потребленные калории (сумма за каждый день)
     meals_sql = text("""
-        SELECT date, SUM(calories) as total_calories FROM meal_logs 
-        WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today 
+        SELECT date, SUM(calories) as total_calories FROM meal_logs
+        WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today
         GROUP BY date
     """)
     meal_logs = db.session.execute(meals_sql, {'user_id': user_id, 'week_ago': week_ago, 'today': today}).fetchall()
@@ -5893,7 +5894,7 @@ def weekly_summary():
 
     # 3. Сожженные активные калории
     activity_sql = text("""
-        SELECT date, active_kcal FROM activity 
+        SELECT date, active_kcal FROM activity
         WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today
     """)
     activities = db.session.execute(activity_sql, {'user_id': user_id, 'week_ago': week_ago, 'today': today}).fetchall()
@@ -5906,8 +5907,8 @@ def weekly_summary():
 
     # Считаем количество приемов пищи по дням (count distinct meal_type)
     meals_count_sql = text("""
-            SELECT date, COUNT(DISTINCT meal_type) as cnt FROM meal_logs 
-            WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today 
+            SELECT date, COUNT(DISTINCT meal_type) as cnt FROM meal_logs
+            WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today
             GROUP BY date
         """)
     meals_count_rows = db.session.execute(meals_count_sql,
@@ -5916,7 +5917,7 @@ def weekly_summary():
 
     # Считаем шаги по дням
     steps_sql = text("""
-            SELECT date, steps FROM activity 
+            SELECT date, steps FROM activity
             WHERE user_id = :user_id AND date BETWEEN :week_ago AND :today
         """)
     steps_rows = db.session.execute(steps_sql, {'user_id': user_id, 'week_ago': week_ago, 'today': today}).fetchall()
