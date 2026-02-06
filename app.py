@@ -2231,6 +2231,7 @@ def api_me():
         }
     })
 
+
 @app.post('/api/register')
 def api_register():
     data = request.get_json(force=True, silent=True) or {}
@@ -2238,32 +2239,49 @@ def api_register():
     email = (data.get('email') or '').strip()
     password = (data.get('password') or '').strip()
 
-    # date_str, sex, face_consent УДАЛЕНЫ
+    # --- ДОБАВЛЕНО ---
+    height = data.get('height')
+    # -----------------
 
     errors = []
     if not name: errors.append("NAME_REQUIRED")
     if not email: errors.append("EMAIL_REQUIRED")
     if not password or len(password) < 6: errors.append("PASSWORD_SHORT")
-    # if sex not in ('male', 'female'): errors.append("SEX_INVALID") # УДАЛЕНО
+
     if User.query.filter(func.lower(User.email) == email.casefold()).first():
         errors.append("EMAIL_EXISTS")
-
-    # Проверка date_of_birth УДАЛЕНА
 
     if errors:
         return jsonify({"ok": False, "errors": errors}), 400
 
     hashed_pw = bcrypt.generate_password_hash(password).decode('utf-8')
+
+    # Создаем пользователя (добавляем рост, если модель User поддерживает поле height)
     user = User(
-        name=name, email=email, password=hashed_pw,
-        # date_of_birth, sex, face_consent УДАЛЕНЫ
+        name=name,
+        email=email,
+        password=hashed_pw,
+        height=float(height) if height else None  # Сохраняем в профиль
     )
     db.session.add(user)
-    db.session.commit()
+    db.session.commit()  # Коммитим, чтобы получить user.id
+
+    # --- ДОБАВЛЕНО: Создаем запись в BodyAnalysis ---
+    if height:
+        try:
+            analysis = BodyAnalysis(
+                user_id=user.id,
+                height=float(height),
+                timestamp=datetime.utcnow()
+            )
+            db.session.add(analysis)
+            db.session.commit()
+        except Exception as e:
+            print(f"Error creating initial analysis: {e}")
+    # -----------------------------------------------
 
     session['user_id'] = user.id
     return jsonify({"ok": True, "user": {"id": user.id, "name": user.name, "email": user.email}}), 201
-
 
 # --- НОВЫЙ ЭНДПОИНТ ДЛЯ РЕГИСТРАЦИИ V2 (С АВАТАРОМ) ---
 @app.route('/api/register_v2', methods=['POST'])
@@ -2362,6 +2380,20 @@ def api_register_v2():
 
         # 5. Привязываем ID пользователя к файлу
         new_file.user_id = user.id
+
+        # --- ДОБАВЛЕНО: Создаем первую запись в истории замеров ---
+        if height_val:
+            try:
+                analysis = BodyAnalysis(
+                    user_id=user.id,
+                    height=float(height_val),
+                    timestamp=datetime.utcnow()
+                )
+                db.session.add(analysis)
+            except Exception as e:
+                print(f"Error creating initial analysis: {e}")
+        # ----------------------------------------------------------
+
         db.session.commit()
 
         # 6. Логиним пользователя (создаем сессию)
