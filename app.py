@@ -2047,23 +2047,32 @@ def api_register_google():
             db.session.flush()
             avatar_file_id = new_file.id
 
-    # Парсинг даты
-    try:
-        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
-    except:
-        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+        # Парсинг даты
+        try:
+            date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+        except:
+            return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
 
-    # 1. Создаем пользователя
-    user = User(
-        name=name,
-        email=email,
-        password=hashed_pw,
-        date_of_birth=date_of_birth,
-        sex=sex,
-        height=user_height,
-        face_consent=face_consent,
-        avatar_file_id=avatar_file_id
-    )
+        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+        user_height = None
+        if height:
+            try:
+                user_height = int(float(height))
+            except:
+                pass
+        # --------------------------
+
+        # 1. Создаем пользователя
+        user = User(
+            name=name,
+            email=email,
+            password=hashed_pw,
+            date_of_birth=date_of_birth,
+            sex=sex,
+            height=user_height,  # Теперь переменная user_height существует
+            face_consent=face_consent,
+            avatar_file_id=avatar_file_id
+        )
     db.session.add(user)
     db.session.flush()  # Получаем user.id
 
@@ -2147,26 +2156,36 @@ def api_register_apple():
             db.session.flush()
             avatar_file_id = new_file.id
 
-    # Парсинг даты
-    try:
-        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
-    except:
-        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+        # Парсинг даты
+        try:
+            date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+        except:
+            return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
 
-    # Проверяем, не занят ли email (на всякий случай)
-    if User.query.filter(func.lower(User.email) == email.casefold()).first():
-        return jsonify({"ok": False, "errors": ["EMAIL_EXISTS"]}), 400
+        # Проверяем, не занят ли email (на всякий случай)
+        if User.query.filter(func.lower(User.email) == email.casefold()).first():
+            return jsonify({"ok": False, "errors": ["EMAIL_EXISTS"]}), 400
 
-    # 1. Создаем пользователя
-    user = User(
-        name=name,
-        email=email,
-        password=hashed_pw,
-        date_of_birth=date_of_birth,
-        sex=sex,
-        face_consent=face_consent,
-        avatar_file_id=avatar_file_id
-    )
+        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+        user_height = None
+        if height:
+            try:
+                user_height = int(float(height))
+            except:
+                pass
+        # --------------------------
+
+        # 1. Создаем пользователя
+        user = User(
+            name=name,
+            email=email,
+            password=hashed_pw,
+            date_of_birth=date_of_birth,
+            sex=sex,
+            height=user_height,  # Теперь переменная user_height существует
+            face_consent=face_consent,
+            avatar_file_id=avatar_file_id
+        )
     db.session.add(user)
     db.session.flush()
 
