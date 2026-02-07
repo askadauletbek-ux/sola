@@ -3675,37 +3675,38 @@ def confirm_analysis():
 @login_required
 def update_weight_simple():
     user = get_current_user()
-    data = request.get_json()
+    data = request.get_json(force=True, silent=True) or {}
     new_weight = data.get('weight')
 
     if new_weight is None:
         return jsonify({"success": False, "error": "Вес не указан"}), 400
 
-    # 1. Берем последний замер, чтобы сохранить преемственность данных (рост, кости и т.д.)
-    last = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+    try:
+        weight_val = float(new_weight)
+    except ValueError:
+        return jsonify({"success": False, "error": "Некорректный формат веса"}), 400
 
-    # 2. Создаем новую запись замера (промежуточный вес)
-    new_analysis = BodyAnalysis(
-        user_id=user.id,
-        timestamp=datetime.now(UTC),
-        weight=float(new_weight),
-        height=last.height if last else 170.0,
-        muscle_mass=last.muscle_mass if last else None,
-        fat_mass=last.fat_mass if last else None,
-        metabolism=last.metabolism if last else None,
-        bmi=float(new_weight) / ((last.height / 100) ** 2) if last and last.height else None
-    )
+    # 1. СОХРАНЯЕМ ТОЛЬКО В WEIGHT LOG (Дневник веса)
+    today = date.today()
 
-    # 3. Если точка А еще не зафиксирована (после сброса целей), фиксируем текущий замер как стартовый
-    if not user.initial_body_analysis_id:
-        db.session.add(new_analysis)
-        db.session.flush()
-        user.initial_body_analysis_id = new_analysis.id
+    # Ищем, есть ли уже запись за сегодня, чтобы обновить её
+    todays_log = WeightLog.query.filter_by(user_id=user.id, date=today).first()
+
+    if todays_log:
+        todays_log.weight = weight_val
     else:
-        db.session.add(new_analysis)
+        new_log = WeightLog(user_id=user.id, weight=weight_val, date=today)
+        db.session.add(new_log)
+
+    # 2. ФИКСАЦИЯ СТАРТОВОГО ВЕСА (если это самое первое взвешивание вообще)
+    if not user.start_weight:
+        user.start_weight = weight_val
+
+    # BodyAnalysis НЕ ТРОГАЕМ
 
     db.session.commit()
-    return jsonify({"success": True, "new_weight": new_weight})
+
+    return jsonify({"success": True, "new_weight": weight_val})
 
 @app.route('/generate_telegram_code')
 def generate_telegram_code():
