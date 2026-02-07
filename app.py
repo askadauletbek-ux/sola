@@ -1406,18 +1406,19 @@ def app_profile_data():
     latest_app = SubscriptionApplication.query.filter_by(user_id=user.id).order_by(
         SubscriptionApplication.created_at.desc()).first()
     delivery_status = latest_app.status if latest_app else None
+
     # --- ВЫЧИСЛЯЕМ ТЕКУЩИЙ ВЕС ДЛЯ USER_DATA ---
     # Логика: 1. WeightLog -> 2. BodyAnalysis -> 3. StartWeight
     current_weight_val = None
 
-    # 1. Проверяем последний лог веса
+    # 1. Проверяем последний лог веса (Приоритет №1)
     last_weight_log = WeightLog.query.filter_by(user_id=user.id) \
         .order_by(WeightLog.date.desc(), WeightLog.created_at.desc()).first()
 
     if last_weight_log:
         current_weight_val = last_weight_log.weight
     else:
-        # 2. Если нет лога, берем из последнего анализа (который вычисляется ниже, но для user_data нужен сейчас)
+        # 2. Если нет лога, берем из последнего анализа
         _latest_analysis_temp = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
             BodyAnalysis.timestamp.desc()).first()
         if _latest_analysis_temp:
@@ -1430,11 +1431,13 @@ def app_profile_data():
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        # --- ДОБАВЛЯЕМ ЭТИ СТРОКИ ---
+        # --- ВАЖНО: Добавляем вес и цель в основной объект пользователя ---
+        "weight": current_weight_val,
+        "weight_goal": user.weight_goal,
+        # -----------------------------------------------------------------
         "height": user.height,
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
         "gender": user.sex,  # Фронтенд ищет ключ 'gender', а в БД поле называется 'sex'
-        # ----------------------------
         "has_subscription": bool(getattr(user, 'has_subscription', False)),
         "is_trainer": bool(getattr(user, 'is_trainer', False)),
         "avatar_filename": user.avatar.filename if user.avatar else None,
@@ -1445,9 +1448,7 @@ def app_profile_data():
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
-        "delivery_status": delivery_status,
-        "weight": current_weight_val,
-        "weight_goal": user.weight_goal,
+        "delivery_status": delivery_status
     }
 
     # --- 3. Данные о диете ---
