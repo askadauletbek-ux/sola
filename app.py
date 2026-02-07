@@ -47,7 +47,6 @@ from google.auth.transport import requests as google_requests
 
 from assistant_bp import assistant_bp
 from streak_bp import streak_bp, start_streak_scheduler, recalculate_streak # <-- Добавлено
-from diet_autogen import start_diet_autogen_scheduler
 from gemini_visualizer import create_record, generate_for_user, _compute_pct
 from meal_reminders import (
     get_scheduler,
@@ -115,6 +114,44 @@ UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+
+def get_dynamic_calorie_goal(user):
+    """
+    Рассчитывает цель калорий: BMR (из замера) + Средняя активность (7 дней) - 15% дефицит.
+    Если данных нет, возвращает дефолтное значение (например, 2000).
+    """
+    try:
+        # 1. Получаем BMR из последнего анализа
+        latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+        bmr = latest_analysis.metabolism if latest_analysis and latest_analysis.metabolism else 0
+
+        # Если BMR нет, пробуем рассчитать по формуле Миффлина-Сан Жеора (если есть вес/рост)
+        if not bmr and latest_analysis and latest_analysis.weight and latest_analysis.height:
+            age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
+            s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
+            bmr = (10 * latest_analysis.weight) + (6.25 * latest_analysis.height) - (5 * age) + s
+
+        if not bmr:
+            return 2000  # Fallback, если совсем нет данных
+
+        # 2. Считаем среднюю активность за последние 7 дней
+        week_ago = date.today() - timedelta(days=7)
+        avg_activity = db.session.query(func.avg(Activity.active_kcal)).filter(
+            Activity.user_id == user.id,
+            Activity.date >= week_ago
+        ).scalar() or 400  # Если активности нет, берем ~400 как умеренную
+
+        # 3. Формула: (BMR + Активность) - 15% (дефицит)
+        tdee = bmr + avg_activity
+        target = int(tdee * 0.85)  # 15% дефицит для похудения
+
+        # Защита от слишком низких значений
+        return max(target, 1200)
+
+    except Exception as e:
+        print(f"Error calculating dynamic goal: {e}")
+        return 2000
 
 def resize_image(filepath, max_size):
     """Resizes an image and saves it back to the same path."""
@@ -716,9 +753,6 @@ def create_app():
     with app.app_context():
         # Автозапуск напоминалок по приёмам пищи
         start_meal_scheduler(app)
-        # Автогенерация диет: 05:00 — GPT генерация почанково, 06:00 — промоут + уведомления
-        start_diet_autogen_scheduler(app)
-        # Запуск проверки стриков
         start_streak_scheduler(app) # <-- Добавлено
 
     return app
@@ -839,12 +873,6 @@ with app.app_context():
             # (Логгирование будет в самой функции)
         except Exception as e:
             print(f"[meal_scheduler] scheduler error: {e}")  # <-- Добавили лог ошибки
-
-        try:
-            start_diet_autogen_scheduler(app)
-            print("[diet_autogen] scheduler started")
-        except Exception as e:
-            print(f"[diet_autogen] scheduler error: {e}")
 
     start_training_notifier()
 
@@ -1403,11 +1431,15 @@ def app_profile_data():
 
     # --- 3. Данные о диете ---
     diet_obj = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).first()
+
+    # Считаем динамическую цель
+    dynamic_goal = get_dynamic_calorie_goal(user)
+
     if diet_obj:
         try:
             diet_data = {
                 "id": diet_obj.id,
-                "total_kcal": diet_obj.total_kcal,
+                "total_kcal": dynamic_goal,  # <--- СТАЛО: подставляем динамическую цель
                 "protein": diet_obj.protein,
                 "fat": diet_obj.fat,
                 "carbs": diet_obj.carbs,
@@ -1650,11 +1682,14 @@ def app_get_today_meals():
     ]
 
     # Добавим целевые БЖУ из диеты
-    diet_calories = 2500  # По умолчанию
     diet_macros = {"protein": 0, "fat": 0, "carbs": 0}
     diet = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).first()
+
+    # Используем нашу новую функцию
+    diet_calories = get_dynamic_calorie_goal(user)
+
     if diet:
-        diet_calories = diet.total_kcal or 2500
+        # diet_calories = diet.total_kcal or 2500  <-- ЭТУ СТРОКУ УБИРАЕМ/КОММЕНТИРУЕМ
         diet_macros = {
             "protein": diet.protein or 0,
             "fat": diet.fat or 0,
