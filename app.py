@@ -1406,6 +1406,25 @@ def app_profile_data():
     latest_app = SubscriptionApplication.query.filter_by(user_id=user.id).order_by(
         SubscriptionApplication.created_at.desc()).first()
     delivery_status = latest_app.status if latest_app else None
+    # --- ВЫЧИСЛЯЕМ ТЕКУЩИЙ ВЕС ДЛЯ USER_DATA ---
+    # Логика: 1. WeightLog -> 2. BodyAnalysis -> 3. StartWeight
+    current_weight_val = None
+
+    # 1. Проверяем последний лог веса
+    last_weight_log = WeightLog.query.filter_by(user_id=user.id) \
+        .order_by(WeightLog.date.desc(), WeightLog.created_at.desc()).first()
+
+    if last_weight_log:
+        current_weight_val = last_weight_log.weight
+    else:
+        # 2. Если нет лога, берем из последнего анализа (который вычисляется ниже, но для user_data нужен сейчас)
+        _latest_analysis_temp = BodyAnalysis.query.filter_by(user_id=user.id).order_by(
+            BodyAnalysis.timestamp.desc()).first()
+        if _latest_analysis_temp:
+            current_weight_val = _latest_analysis_temp.weight
+        else:
+            # 3. Если нет анализов, берем стартовый вес
+            current_weight_val = user.start_weight
 
     user_data = {
         "id": user.id,
@@ -1426,7 +1445,9 @@ def app_profile_data():
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
-        "delivery_status": delivery_status
+        "delivery_status": delivery_status,
+        "weight": current_weight_val,
+        "weight_goal": user.weight_goal,
     }
 
     # --- 3. Данные о диете ---
