@@ -3727,6 +3727,15 @@ def edit_profile():
         if date_of_birth_str:
             user.date_of_birth = datetime.strptime(date_of_birth_str, '%Y-%m-%d').date()
 
+        # --- ДОБАВЛЕНО: Обновление целевого веса ---
+        new_target_weight = request.form.get('target_weight')
+        if new_target_weight:
+            try:
+                user.weight_goal = float(new_target_weight)
+            except ValueError:
+                pass
+        # ------------------------------------------
+
         # --- Обработка аватара (ИСПРАВЛЕННАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ) ---
         file = request.files.get('avatar')
         if file and file.filename:
