@@ -1463,7 +1463,7 @@ def app_profile_data():
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
-        "delivery_status": delivery_status
+        "delivery_status": delivery_status,
         "is_new_squad_member": bool(getattr(user, "is_new_squad_member", False)),
         "squad_name": squad_name,
         "coach_name": coach_name
