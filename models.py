@@ -60,6 +60,7 @@ class User(db.Model):
     squad_status = db.Column(db.String(20), default='none')  # 'none', 'pending', 'active'
     squad_pref_time = db.Column(db.String(20), nullable=True)  # 'morning', 'day', 'evening'
     squad_fitness_level = db.Column(db.String(20), nullable=True)  # 'newbie', 'pro'
+    is_new_squad_member = db.Column(db.Boolean, default=False, server_default=expression.false())  # <-- Добавлено
     # ------------------------------------
 
     # Кэш стрика (пересчитывается на основе реальных записей MealLog)

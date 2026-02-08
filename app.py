@@ -2288,7 +2288,6 @@ def api_logout():
     session.clear()
     return jsonify({"ok": True})
 
-
 @app.get('/api/me')
 def api_me():
     u = get_current_user()
@@ -2314,6 +2313,10 @@ def api_me():
             "current_streak": getattr(u, "current_streak", 0),
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
+            # --- NEW SQUAD MEMBER FLAG ---
+            "is_new_squad_member": bool(getattr(u, "is_new_squad_member", False)),
+            "squad_name": u.own_group.name if u.own_group else (u.groups.first().group.name if u.groups.first() else None),
+            "coach_name": u.own_group.trainer.name if u.own_group and u.own_group.trainer else (u.groups.first().group.trainer.name if u.groups.first() and u.groups.first().group.trainer else None),
         }
     })
 
@@ -5659,6 +5662,8 @@ def admin_assign_squad():
 
             # 2. Обновляем статус пользователя
             u.squad_status = 'active'
+            # Ставим флаг, чтобы показать экран поздравления при следующем входе
+            u.is_new_squad_member = True
             db.session.commit()
 
             # 3. Отправляем PUSH уведомление
@@ -5681,6 +5686,24 @@ def admin_assign_squad():
     return redirect(url_for("admin_squads_distribution"))
 
 # Найдите и замените существующую функцию admin_grant_subscription
+
+@app.route('/api/ack_squad_entry', methods=['POST'])
+@login_required
+def ack_squad_entry():
+    """
+    Сбрасывает флаг is_new_squad_member, когда пользователь увидел экран поздравления.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    try:
+        user.is_new_squad_member = False
+        db.session.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/admin/user/<int:user_id>/subscribe", methods=["POST"])
 @admin_required
