@@ -8073,7 +8073,7 @@ def get_weekly_stories(group_id):
         if top_3:
             stories.append({
                 "type": "leaderboard",
-                "title": "Лидеры гонки 🏆",
+                "title": "Лидеры гонки",
                 "data": top_3,
                 "bg_color": "0xFF0F172A"
             })
@@ -8082,7 +8082,7 @@ def get_weekly_stories(group_id):
         if mvp_data:
             stories.append({
                 "type": "mvp",
-                "title": "MVP Недели 🔥",
+                "title": "MVP Недели",
                 "user": mvp_data,
                 "bg_color": "0xFFFF5722"
             })
