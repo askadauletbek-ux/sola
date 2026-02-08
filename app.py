@@ -1321,6 +1321,21 @@ def app_profile_data():
     latest_analysis_data = None
     weight_progress = None
 
+    coach_name = None
+    squad_name = None
+
+    if user.own_group:
+        squad_name = user.own_group.name
+        if user.own_group.trainer:
+            coach_name = user.own_group.trainer.name
+    else:
+        # Безопасно берем первую группу
+        membership = user.groups.first()
+        if membership and membership.group:
+            squad_name = membership.group.name
+            if membership.group.trainer:
+                coach_name = membership.group.trainer.name
+
     # Рассчитываем статус за последние 30 дней для календаря
     today = date.today()
     start_30_days = today - timedelta(days=30)
@@ -1449,6 +1464,9 @@ def app_profile_data():
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
         "delivery_status": delivery_status
+        "is_new_squad_member": bool(getattr(user, "is_new_squad_member", False)),
+        "squad_name": squad_name,
+        "coach_name": coach_name
     }
 
     # --- 3. Данные о диете ---
