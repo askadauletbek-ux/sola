@@ -2311,6 +2311,45 @@ def api_me():
     u = get_current_user()
     if not u:
         return jsonify({"ok": False}), 401
+        # --- РАСЧЕТ ОЧКОВ И РАНГА ---
+        squad_score = 0
+        squad_rank = '-'
+
+        # 1. Определяем ID группы
+        group_id = None
+        if u.own_group:
+            group_id = u.own_group.id
+        else:
+            membership = GroupMember.query.filter_by(user_id=u.id).first()
+            if membership:
+                group_id = membership.group_id
+
+        # 2. Если группа есть, считаем очки за текущую неделю (с Понедельника)
+        if group_id:
+            today = date.today()
+            start_of_week = today - timedelta(days=today.weekday())
+
+            # Получаем таблицу всех очков группы за неделю
+            scores = db.session.query(
+                SquadScoreLog.user_id,
+                func.sum(SquadScoreLog.points).label('total')
+            ).filter(
+                SquadScoreLog.group_id == group_id,
+                func.date(SquadScoreLog.created_at) >= start_of_week
+            ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
+
+            # Ищем себя в списке
+            found = False
+            for i, (uid, sc) in enumerate(scores):
+                if uid == u.id:
+                    squad_score = int(sc)
+                    squad_rank = i + 1
+                    found = True
+                    break
+
+            # Если очков нет, но мы в группе — ранг можно считать последним или оставить '-'
+            # (в данном варианте оставляем '-' или 0, как инициализировано)
+
     return jsonify({
         "ok": True,
         "user": {
@@ -2335,6 +2374,8 @@ def api_me():
             "is_new_squad_member": bool(getattr(u, "is_new_squad_member", False)),
             "squad_name": u.own_group.name if u.own_group else (u.groups.first().group.name if u.groups.first() else None),
             "coach_name": u.own_group.trainer.name if u.own_group and u.own_group.trainer else (u.groups.first().group.trainer.name if u.groups.first() and u.groups.first().group.trainer else None),
+            "squad_score": squad_score,
+            "squad_rank": squad_rank
         }
     })
 
