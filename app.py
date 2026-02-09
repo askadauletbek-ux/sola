@@ -2385,11 +2385,30 @@ def update_fcm_token():
     data = request.get_json(force=True, silent=True) or {}
     token = data.get('fcm_token')
 
-    if token:
+    if not token:
+        return jsonify({'ok': False, 'error': 'Token missing'}), 400
+
+    try:
+        # 1. Сначала ищем, не занят ли этот токен ДРУГИМ пользователем
+        # (из-за unique=True это вызовет ошибку, если не очистить)
+        existing_owner = User.query.filter(User.fcm_device_token == token).first()
+        if existing_owner and existing_owner.id != user.id:
+            existing_owner.fcm_device_token = None
+            db.session.add(existing_owner)
+
+        # 2. Присваиваем токен текущему пользователю
         user.fcm_device_token = token
+        db.session.add(user)
+
         db.session.commit()
+        print(f"✅ FCM Token saved for user {user.email}")
         return jsonify({'ok': True}), 200
-    return jsonify({'ok': False, 'error': 'Token missing'}), 400
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error saving FCM token: {e}")
+        # Возвращаем текст ошибки, чтобы Flutter увидел её
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.get('/api/me')
