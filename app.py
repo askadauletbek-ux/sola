@@ -1440,8 +1440,8 @@ def app_profile_data():
         SubscriptionApplication.created_at.desc()).first()
     delivery_status = latest_app.status if latest_app else None
 
+
     # --- ВЫЧИСЛЯЕМ ТЕКУЩИЙ ВЕС ДЛЯ USER_DATA ---
-    # Логика: 1. WeightLog -> 2. BodyAnalysis -> 3. StartWeight
     current_weight_val = None
 
     # 1. Проверяем последний лог веса (Приоритет №1)
@@ -1460,80 +1460,63 @@ def app_profile_data():
             # 3. Если нет анализов, берем стартовый вес
             current_weight_val = user.start_weight
 
-        # --- РАСЧЕТ ОЧКОВ И РАНГА (как в api_me) ---
-        squad_score = 0
-        squad_rank = '-'
+    # --- РАСЧЕТ ОЧКОВ И РАНГА (вынесено из условий для надежности) ---
+    squad_score = 0
+    squad_rank = '-'
 
-        # 1. Определяем ID группы
-        group_id = None
-        if user.own_group:
-            group_id = user.own_group.id
-        else:
-            membership = GroupMember.query.filter_by(user_id=user.id).first()
-            if membership:
-                group_id = membership.group_id
+    group_id = None
+    if user.own_group:
+        group_id = user.own_group.id
+    else:
+        membership = GroupMember.query.filter_by(user_id=user.id).first()
+        if membership:
+            group_id = membership.group_id
 
-        # 2. Если группа есть, считаем очки за текущую неделю
-        if group_id:
-            try:
-                today = date.today()
-                start_of_week = today - timedelta(days=today.weekday())
+    if group_id:
+        try:
+            start_of_week = date.today() - timedelta(days=date.today().weekday())
+            scores = db.session.query(
+                SquadScoreLog.user_id,
+                func.sum(SquadScoreLog.points).label('total')
+            ).filter(
+                SquadScoreLog.group_id == group_id,
+                func.date(SquadScoreLog.created_at) >= start_of_week
+            ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
 
-                # Получаем таблицу очков ВСЕХ участников группы за неделю
-                scores = db.session.query(
-                    SquadScoreLog.user_id,
-                    func.sum(SquadScoreLog.points).label('total')
-                ).filter(
-                    SquadScoreLog.group_id == group_id,
-                    func.date(SquadScoreLog.created_at) >= start_of_week
-                ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
+            squad_rank = len(scores) + 1
+            for i, (uid, sc) in enumerate(scores):
+                if uid == user.id:
+                    squad_score = int(sc)
+                    squad_rank = i + 1
+                    break
+        except Exception as e:
+            print(f"Error calculating rank in profile: {e}")
 
-                # Ищем себя в списке
-                squad_rank = len(scores) + 1  # Если нас нет в списке, мы последние
-
-                for i, (uid, sc) in enumerate(scores):
-                    if uid == user.id:
-                        squad_score = int(sc)
-                        squad_rank = i + 1
-                        break
-
-                # Если очков нет совсем, но пользователь в группе
-                if squad_score == 0 and not scores:
-                    squad_rank = 1
-
-            except Exception as e:
-                print(f"Error calculating rank in profile: {e}")
-                squad_score = 0
-                squad_rank = '-'
-
-        user_data = {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            # --- ВАЖНО: Добавляем вес и цель в основной объект пользователя ---
-            "weight": current_weight_val,
-            "weight_goal": user.weight_goal,
-            # -----------------------------------------------------------------
-            "height": user.height,
-            "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
-            "gender": user.sex,  # Фронтенд ищет ключ 'gender', а в БД поле называется 'sex'
-            "has_subscription": bool(getattr(user, 'has_subscription', False)),
-            "is_trainer": bool(getattr(user, 'is_trainer', False)),
-            "avatar_filename": user.avatar.filename if user.avatar else None,
-            "current_streak": getattr(user, "current_streak", 0),
-            "streak_nutrition": getattr(user, "streak_nutrition", 0),
-            "streak_activity": getattr(user, "streak_activity", 0),
-            "scanner_onboarding_seen": bool(getattr(user, "scanner_onboarding_seen", False)),
-            "calendar_history": calendar_history,
-            "show_welcome_popup": show_popup,
-            "step_goal": getattr(user, "step_goal", 10000),
-            "delivery_status": delivery_status,
-            "is_new_squad_member": bool(getattr(user, "is_new_squad_member", False)),
-            "squad_name": squad_name,
-            "coach_name": coach_name,
-            "squad_score": squad_score,  # <--- Добавлено
-            "squad_rank": squad_rank  # <--- Добавлено
-        }
+    # --- ТЕПЕРЬ user_data ГАРАНТИРОВАННО ИНИЦИАЛИЗИРУЕТСЯ ---
+    user_data = {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "weight": current_weight_val,
+        "weight_goal": user.weight_goal,
+        "height": user.height,
+        "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+        "gender": user.sex,
+        "has_subscription": bool(getattr(user, 'has_subscription', False)),
+        "is_trainer": bool(getattr(user, 'is_trainer', False)),
+        "avatar_filename": user.avatar.filename if user.avatar else None,
+        "current_streak": getattr(user, "current_streak", 0),
+        "streak_nutrition": getattr(user, "streak_nutrition", 0),
+        "streak_activity": getattr(user, "streak_activity", 0),
+        "calendar_history": calendar_history,
+        "show_welcome_popup": show_popup,
+        "step_goal": getattr(user, "step_goal", 10000),
+        "delivery_status": delivery_status,
+        "squad_name": squad_name,
+        "coach_name": coach_name,
+        "squad_score": squad_score,
+        "squad_rank": squad_rank
+    }
 
     # --- 3. Данные о диете ---
     diet_obj = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).first()
