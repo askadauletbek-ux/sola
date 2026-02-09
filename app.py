@@ -118,14 +118,21 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 def get_dynamic_calorie_goal(user):
     """
-    Рассчитывает цель калорий: BMR (из замера) + Средняя активность (7 дней) - 15% дефицит.
-    Если данных нет, возвращает дефолтное значение (например, 2000).
+    Рассчитывает цель калорий.
+    Приоритет 1: Сохраненная цель из последнего анализа (user.target_calories).
+    Приоритет 2: Расчет на лету (BMR + Активность - 15%).
+    Приоритет 3: Дефолт 2000.
     """
+    # 1. Если есть сохраненная цель из Confirm Analysis — берем её
+    if getattr(user, 'target_calories', 0) and user.target_calories > 1000:
+        return user.target_calories
+
     try:
-        # 1. Получаем BMR из последнего анализа
+        # 2. Пытаемся рассчитать на лету
+        # Получаем самый свежий анализ
         latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
 
-        # 2. Ищем BMR. Сначала проверяем последнюю запись.
+        # Ищем BMR. Сначала проверяем последнюю запись.
         bmr = latest_analysis.metabolism if latest_analysis and latest_analysis.metabolism else 0
 
         # Если в последней записи BMR нет (например, просто обновили вес), ищем последний ИЗВЕСТНЫЙ BMR в истории
@@ -138,33 +145,26 @@ def get_dynamic_calorie_goal(user):
             if last_valid_bmr:
                 bmr = last_valid_bmr.metabolism
 
-        # Если BMR всё ещё нет, пробуем рассчитать по формуле Миффлина-Сан Жеора (если есть вес/рост)
+        # Если BMR всё ещё нет, пробуем рассчитать по формуле Миффлина-Сан Жеора
         if not bmr and latest_analysis and latest_analysis.weight and latest_analysis.height:
             age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
             s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
             bmr = (10 * latest_analysis.weight) + (6.25 * latest_analysis.height) - (5 * age) + s
 
         if not bmr:
-            return 2000  # Fallback, если совсем нет данных
-            age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
-            s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
-            bmr = (10 * latest_analysis.weight) + (6.25 * latest_analysis.height) - (5 * age) + s
+            return 2000  # Fallback
 
-        if not bmr:
-            return 2000  # Fallback, если совсем нет данных
-
-        # 2. Считаем среднюю активность за последние 7 дней
+        # Считаем среднюю активность за последние 7 дней
         week_ago = date.today() - timedelta(days=7)
         avg_activity = db.session.query(func.avg(Activity.active_kcal)).filter(
             Activity.user_id == user.id,
             Activity.date >= week_ago
-        ).scalar() or 400  # Если активности нет, берем ~400 как умеренную
+        ).scalar() or 400
 
-        # 3. Формула: (BMR + Активность) - 15% (дефицит)
+        # Формула: (BMR + Активность) - 15% (дефицит)
         tdee = bmr + avg_activity
-        target = int(tdee * 0.85)  # 15% дефицит для похудения
+        target = int(tdee * 0.85)
 
-        # Защита от слишком низких значений
         return max(target, 1200)
 
     except Exception as e:
@@ -2324,30 +2324,33 @@ def api_logout():
     session.clear()
     return jsonify({"ok": True})
 
+
 @app.get('/api/me')
 def api_me():
     u = get_current_user()
     if not u:
         return jsonify({"ok": False}), 401
-        # --- РАСЧЕТ ОЧКОВ И РАНГА ---
-        squad_score = 0
-        squad_rank = '-'
 
-        # 1. Определяем ID группы
-        group_id = None
-        if u.own_group:
-            group_id = u.own_group.id
-        else:
-            membership = GroupMember.query.filter_by(user_id=u.id).first()
-            if membership:
-                group_id = membership.group_id
+    # --- РАСЧЕТ ОЧКОВ И РАНГА (ИСПРАВЛЕНО) ---
+    squad_score = 0
+    squad_rank = '-'
 
-        # 2. Если группа есть, считаем очки за текущую неделю (с Понедельника)
-        if group_id:
+    # 1. Определяем ID группы
+    group_id = None
+    if u.own_group:
+        group_id = u.own_group.id
+    else:
+        membership = GroupMember.query.filter_by(user_id=u.id).first()
+        if membership:
+            group_id = membership.group_id
+
+    # 2. Если группа есть, считаем очки за текущую неделю
+    if group_id:
+        try:
             today = date.today()
             start_of_week = today - timedelta(days=today.weekday())
 
-            # Получаем таблицу всех очков группы за неделю
+            # Получаем таблицу очков ВСЕХ участников группы за неделю
             scores = db.session.query(
                 SquadScoreLog.user_id,
                 func.sum(SquadScoreLog.points).label('total')
@@ -2357,16 +2360,22 @@ def api_me():
             ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
 
             # Ищем себя в списке
-            found = False
+            squad_rank = len(scores) + 1  # Если нас нет в списке, мы последние
+
             for i, (uid, sc) in enumerate(scores):
                 if uid == u.id:
                     squad_score = int(sc)
                     squad_rank = i + 1
-                    found = True
                     break
 
-            # Если очков нет, но мы в группе — ранг можно считать последним или оставить '-'
-            # (в данном варианте оставляем '-' или 0, как инициализировано)
+            # Если очков нет совсем, но пользователь в группе
+            if squad_score == 0 and not scores:
+                squad_rank = 1
+
+        except Exception as e:
+            print(f"Error calculating rank: {e}")
+            squad_score = 0
+            squad_rank = '-'
 
     return jsonify({
         "ok": True,
@@ -2374,10 +2383,8 @@ def api_me():
             "id": u.id,
             "name": u.name,
             "email": u.email,
-            # --- ДОБАВЛЕНО: возвращаем дату рождения и аватар ---
             "date_of_birth": u.date_of_birth.isoformat() if u.date_of_birth else None,
             "avatar_filename": u.avatar.filename if u.avatar else None,
-            # ----------------------------------------------------
             "has_subscription": bool(getattr(u, 'has_subscription', False)),
             "is_trainer": bool(getattr(u, 'is_trainer', False)),
             'onboarding_complete': bool(getattr(u, 'onboarding_complete', False)),
@@ -2388,10 +2395,15 @@ def api_me():
             "current_streak": getattr(u, "current_streak", 0),
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
-            # --- NEW SQUAD MEMBER FLAG ---
             "is_new_squad_member": bool(getattr(u, "is_new_squad_member", False)),
-            "squad_name": u.own_group.name if u.own_group else (u.groups.first().group.name if u.groups.first() else None),
-            "coach_name": u.own_group.trainer.name if u.own_group and u.own_group.trainer else (u.groups.first().group.trainer.name if u.groups.first() and u.groups.first().group.trainer else None),
+
+            # Имена группы и тренера
+            "squad_name": u.own_group.name if u.own_group else (
+                u.groups.first().group.name if u.groups.first() else None),
+            "coach_name": u.own_group.trainer.name if u.own_group and u.own_group.trainer else (
+                u.groups.first().group.trainer.name if u.groups.first() and u.groups.first().group.trainer else None),
+
+            # --- ИСПРАВЛЕННЫЕ ПОЛЯ ---
             "squad_score": squad_score,
             "squad_rank": squad_rank
         }
