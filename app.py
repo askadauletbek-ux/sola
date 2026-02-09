@@ -2369,8 +2369,27 @@ def api_register_apple():
 
 @app.post('/api/logout')
 def api_logout():
+    # Очищаем FCM токен при выходе, чтобы уведомления не приходили
+    u = get_current_user()
+    if u:
+        u.fcm_device_token = None
+        db.session.commit()
     session.clear()
     return jsonify({"ok": True})
+
+
+@app.route('/api/users/fcm', methods=['POST'])
+@login_required
+def update_fcm_token():
+    user = get_current_user()
+    data = request.get_json(force=True, silent=True) or {}
+    token = data.get('fcm_token')
+
+    if token:
+        user.fcm_device_token = token
+        db.session.commit()
+        return jsonify({'ok': True}), 200
+    return jsonify({'ok': False, 'error': 'Token missing'}), 400
 
 
 @app.get('/api/me')
