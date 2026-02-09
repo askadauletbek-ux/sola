@@ -124,10 +124,28 @@ def get_dynamic_calorie_goal(user):
     try:
         # 1. Получаем BMR из последнего анализа
         latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+
+        # 2. Ищем BMR. Сначала проверяем последнюю запись.
         bmr = latest_analysis.metabolism if latest_analysis and latest_analysis.metabolism else 0
 
-        # Если BMR нет, пробуем рассчитать по формуле Миффлина-Сан Жеора (если есть вес/рост)
+        # Если в последней записи BMR нет (например, просто обновили вес), ищем последний ИЗВЕСТНЫЙ BMR в истории
+        if not bmr:
+            last_valid_bmr = BodyAnalysis.query.filter(
+                BodyAnalysis.user_id == user.id,
+                BodyAnalysis.metabolism > 0
+            ).order_by(BodyAnalysis.timestamp.desc()).first()
+
+            if last_valid_bmr:
+                bmr = last_valid_bmr.metabolism
+
+        # Если BMR всё ещё нет, пробуем рассчитать по формуле Миффлина-Сан Жеора (если есть вес/рост)
         if not bmr and latest_analysis and latest_analysis.weight and latest_analysis.height:
+            age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
+            s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
+            bmr = (10 * latest_analysis.weight) + (6.25 * latest_analysis.height) - (5 * age) + s
+
+        if not bmr:
+            return 2000  # Fallback, если совсем нет данных
             age = calculate_age(user.date_of_birth) if user.date_of_birth else 30
             s = -161 if (getattr(user, 'sex', 'female') == 'female') else 5
             bmr = (10 * latest_analysis.weight) + (6.25 * latest_analysis.height) - (5 * age) + s
