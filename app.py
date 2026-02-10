@@ -1515,7 +1515,8 @@ def app_profile_data():
         "squad_name": squad_name,
         "coach_name": coach_name,
         "squad_score": squad_score,
-        "squad_rank": squad_rank
+        "squad_rank": squad_rank,
+        "phone_number": user.phone_number
     }
 
     # --- 3. Данные о диете ---
@@ -3911,6 +3912,11 @@ def edit_profile():
         if date_of_birth_str:
             user.date_of_birth = datetime.strptime(date_of_birth_str, '%Y-%m-%d').date()
 
+        # Обновление телефона
+        new_phone = request.form.get('phone_number')
+        if new_phone is not None:
+            user.phone_number = new_phone.strip()
+
         # --- ДОБАВЛЕНО: Обновление целевого веса ---
         new_target_weight = request.form.get('target_weight')
         if new_target_weight:
@@ -4756,7 +4762,8 @@ def admin_dashboard():
         statuses[u.id] = {
             'meal': has_meal,
             'activity': has_activity,
-            'subscription_active': u.has_subscription  # Проверяем наличие активной подписки
+            'subscription_active': u.has_subscription,
+            'owns_group': bool(u.own_group)
         }
         # meals
         meals = MealLog.query.filter_by(user_id=u.id, date=today).all()
@@ -4828,6 +4835,84 @@ def admin_dashboard():
         details=details,
         today=today
     )
+
+
+# --- ADMIN: SQUADS CONTROL ---
+
+@app.route("/admin/squads")
+@admin_required
+def admin_squads_control():
+    """Страница полного контроля сквадов."""
+    groups = Group.query.options(
+        subqueryload(Group.trainer),
+        subqueryload(Group.members)
+    ).order_by(Group.created_at.desc()).all()
+
+    # Статистика для каждого сквада
+    squads_data = []
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+
+    for g in groups:
+        # Сумма баллов сквада за неделю
+        weekly_score = db.session.query(func.sum(SquadScoreLog.points)).filter(
+            SquadScoreLog.group_id == g.id,
+            func.date(SquadScoreLog.created_at) >= start_of_week
+        ).scalar() or 0
+
+        squads_data.append({
+            "group": g,
+            "weekly_score": int(weekly_score),
+            "members_count": len(g.members),
+            "last_activity": g.messages[-1].timestamp if g.messages else g.created_at
+        })
+
+    return render_template("admin_squads_list.html", squads=squads_data)
+
+
+@app.route("/admin/squads/create", methods=["POST"])
+@admin_required
+def admin_create_squad():
+    """Создание сквада из админки."""
+    name = request.form.get("name")
+    description = request.form.get("description")
+    trainer_id = request.form.get("trainer_id")
+
+    if not name or not trainer_id:
+        flash("Ошибка: Название и Тренер обязательны.", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    try:
+        trainer = db.session.get(User, trainer_id)
+        if not trainer:
+            flash("Тренер не найден.", "error")
+            return redirect(url_for("admin_dashboard"))
+
+        if trainer.own_group:
+            flash(f"У тренера {trainer.name} уже есть группа!", "error")
+            return redirect(url_for("admin_dashboard"))
+
+        # Создаем группу
+        new_group = Group(
+            name=name,
+            description=description,
+            trainer_id=trainer.id
+        )
+        # Автоматически делаем юзера тренером, если не был
+        trainer.is_trainer = True
+
+        db.session.add(new_group)
+        db.session.commit()
+
+        log_audit("create_squad", "Group", new_group.id, new={"name": name, "trainer": trainer.email})
+        flash(f"Отряд '{name}' успешно создан!", "success")
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Ошибка создания: {e}", "error")
+
+    # Редирект на новый список сквадов
+    return redirect(url_for("admin_squads_control"))
 
 
 # ===== ADMIN: Заявки на подписку =====
@@ -5208,149 +5293,101 @@ def create_group():
 
 @app.route('/groups/<int:group_id>')
 @login_required
-
 def group_detail(group_id):
-    # Ваша проверка подписки здесь
+    # Проверка подписки
     if not get_current_user().has_subscription:
-        flash("Доступ к группам и сообществу открыт только по подписке.", "warning")
-        # ИСПРАВЛЕНИЕ: Добавьте эту строку
+        flash("Доступ к группам открыт только по подписке.", "warning")
         return redirect(url_for('profile'))
 
     group = Group.query.get_or_404(group_id)
     user = get_current_user()
+
+    # Проверка доступа (участник, тренер или админ)
     is_member = any(m.user_id == user.id for m in group.members)
+    if not is_member and group.trainer_id != user.id and not is_admin():
+        flash("У вас нет доступа к этой группе", "error")
+        return redirect(url_for('profile'))
 
-    raw_messages = GroupMessage.query.filter_by(group_id=group.id).order_by(GroupMessage.timestamp.desc()).all()
-    processed_messages = []
-    last_sender_id = None
-    for message in raw_messages:
-        show_avatar = (message.user_id != last_sender_id)
-        processed_messages.append({
-            'id': message.id, 'group_id': message.group_id, 'user_id': message.user_id, 'user': message.user,
-            'text': message.text, 'timestamp': message.timestamp, 'image_file': message.image_file,
-            'reactions': message.reactions, 'show_avatar': show_avatar, 'is_current_user': (message.user_id == user.id)
-        })
-        last_sender_id = message.user_id
-    all_posts = GroupTask.query.filter_by(group_id=group.id).order_by(GroupTask.created_at.desc()).all()
+    # 1. Расчет дат (Текущая неделя Пн-Вс)
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
 
-    group_member_stats = []
-    if user.is_trainer and group.trainer_id == user.id:
-        today = date.today()
-        all_relevant_members = [m.user for m in group.members]
-        if group.trainer not in all_relevant_members and group.trainer.email != ADMIN_EMAIL:
-            all_relevant_members.append(group.trainer)
+    # 2. Сбор очков за неделю (SquadScoreLog)
+    scores = db.session.query(
+        SquadScoreLog.user_id,
+        func.sum(SquadScoreLog.points).label('total')
+    ).filter(
+        SquadScoreLog.group_id == group.id,
+        func.date(SquadScoreLog.created_at) >= start_of_week
+    ).group_by(SquadScoreLog.user_id).all()
 
-        for member_user in all_relevant_members:
-            if member_user.email == ADMIN_EMAIL and not any(m.user_id == member_user.id for m in group.members):
-                continue
+    score_map = {uid: int(total) for uid, total in scores}
 
-            latest_analysis = BodyAnalysis.query.filter_by(user_id=member_user.id).order_by(
-                BodyAnalysis.timestamp.desc()).first()
+    # 3. Сбор данных об активности (кто "спит")
+    # Получаем дату последнего лога еды для каждого юзера
+    last_meals = db.session.query(
+        MealLog.user_id, func.max(MealLog.date)
+    ).group_by(MealLog.user_id).all()
+    last_meal_map = {uid: d for uid, d in last_meals}
 
-            fat_loss_progress = None
-            if latest_analysis and member_user.fat_mass_goal and latest_analysis.fat_mass > member_user.fat_mass_goal:
-                start_datetime = latest_analysis.timestamp
+    # 4. Формирование списка участников
+    members_data = []
 
-                meal_data = db.session.query(MealLog.date, func.sum(MealLog.calories)).filter(
-                    MealLog.user_id == member_user.id, MealLog.date >= start_datetime.date()
-                ).group_by(MealLog.date).all()
-                meal_map = dict(meal_data)
+    # Собираем всех: участники + тренер
+    all_users = [m.user for m in group.members]
+    if group.trainer and group.trainer not in all_users:
+        all_users.append(group.trainer)
 
-                activity_data = db.session.query(Activity.date, Activity.active_kcal).filter(
-                    Activity.user_id == member_user.id, Activity.date >= start_datetime.date()
-                ).all()
-                activity_map = dict(activity_data)
+    for u in all_users:
+        # Пропускаем админа, если он не тренер
+        if u.email == ADMIN_EMAIL and u.id != group.trainer_id:
+            continue
 
-                member_metabolism = latest_analysis.metabolism or 0
-                total_accumulated_deficit = 0
-                delta_days = (today - start_datetime.date()).days
+        # Очки
+        score = score_map.get(u.id, 0)
 
-                if delta_days >= 0:
-                    for i in range(delta_days + 1):
-                        current_day = start_datetime.date() + timedelta(days=i)
-                        consumed = meal_map.get(current_day, 0)
-                        burned_active = activity_map.get(current_day, 0)
+        # Активность
+        last_active = last_meal_map.get(u.id)
+        is_inactive = False
+        days_inactive = 0
 
-                        # --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
-                        if i == 0:  # Это день анализа
-                            # Убираем калории, съеденные ДО замера
-                            calories_before_analysis = db.session.query(func.sum(MealLog.calories)).filter(
-                                MealLog.user_id == member_user.id,
-                                MealLog.date == current_day,
-                                MealLog.created_at < start_datetime
-                            ).scalar() or 0
-                            consumed -= calories_before_analysis
-                            # Игнорируем активность за день замера, т.к. нет точного времени
-                            burned_active = 0
-                        # --- КОНЕЦ ИЗМЕНЕНИЙ ---
-
-                        daily_deficit = (member_metabolism + burned_active) - consumed
-                        if daily_deficit > 0:
-                            total_accumulated_deficit += daily_deficit
-
-                KCAL_PER_KG_FAT = 7700
-                total_fat_to_lose_kg = latest_analysis.fat_mass - member_user.fat_mass_goal
-
-                estimated_fat_burned_kg = min(total_accumulated_deficit / KCAL_PER_KG_FAT, total_fat_to_lose_kg)
-
-                percentage = 0
-                if total_fat_to_lose_kg > 0:
-                    percentage = (estimated_fat_burned_kg / total_fat_to_lose_kg) * 100
-
-                fat_loss_progress = {
-                    'percentage': min(100, max(0, percentage)),
-                    'initial_kg': latest_analysis.fat_mass,
-                    'goal_kg': member_user.fat_mass_goal,
-                    'current_kg': latest_analysis.fat_mass - estimated_fat_burned_kg
-                }
-
-                # --- ПРОВЕРКА АКТИВНОСТИ (НОВОЕ) ---
-                # Ищем последнюю запись еды или активности
-                last_meal = MealLog.query.filter_by(user_id=member_user.id).order_by(MealLog.date.desc()).first()
-                last_act = Activity.query.filter_by(user_id=member_user.id).order_by(Activity.date.desc()).first()
-
-                last_active_date = None
-                if last_meal: last_active_date = last_meal.date
-                if last_act and (not last_active_date or last_act.date > last_active_date):
-                    last_active_date = last_act.date
-
-                is_inactive = False
-                days_inactive = 0
-
-                if last_active_date:
-                    days_inactive = (date.today() - last_active_date).days
-                    if days_inactive >= 3:  # Если не было активности 3 дня
-                        is_inactive = True
-                elif not member_user.is_trainer:  # Если вообще нет записей и это не тренер
+        if u.id != group.trainer_id:  # Тренера не считаем неактивным
+            if last_active:
+                days_inactive = (today - last_active).days
+                if days_inactive >= 3:
                     is_inactive = True
-                    days_inactive = 999
-                    # -----------------------------------
+            else:
+                # Если вообще нет записей
+                is_inactive = True
+                days_inactive = 999
 
-                group_member_stats.append({
-                    'user': member_user,
-                    'fat_loss_progress': fat_loss_progress,
-                    'is_trainer_in_group': (member_user.id == group.trainer_id),
-                    'is_inactive': is_inactive,  # Флаг для шаблона
-                    'days_inactive': days_inactive
-                })
+        members_data.append({
+            'user': u,
+            'score': score,
+            'is_inactive': is_inactive,
+            'days_inactive': days_inactive,
+            'is_trainer': (u.id == group.trainer_id)
+        })
 
-                # Сортировка: Тренер -> Неактивные (чтобы были на виду в списке) -> Активные
-            group_member_stats.sort(
-                key=lambda x: (not x['is_trainer_in_group'], not x['is_inactive'], x['user'].name.lower()))
+    # Сортировка лидерборда: Сначала по очкам (убыв), потом по имени
+    # Тренера можно исключить из топа в шаблоне, или здесь
+    members_data.sort(key=lambda x: (-x['score'], x['user'].name))
 
-        # Получаем будущие тренировки группы
-        upcoming_trainings = Training.query.filter(
-            Training.group_id == group.id,
-            Training.date >= date.today()
-        ).order_by(Training.date, Training.start_time).all()
+    # 5. Сообщения и Задачи
+    # Сообщения грузим через API (loadFeed), здесь данные не нужны,
+    # но можно передать задачи (Tasks)
+
+    # 6. Тренировки (будущие)
+    upcoming_trainings = Training.query.filter(
+        Training.group_id == group.id,
+        Training.date >= today
+    ).order_by(Training.date, Training.start_time).all()
 
     return render_template('group_detail.html',
-                               group=group,
-                               is_member=is_member,
-                               processed_messages=processed_messages,
-                               group_member_stats=group_member_stats,
-                               all_posts=all_posts,
-                               upcoming_trainings=upcoming_trainings)  # Передаем тренировки
+                           group=group,
+                           is_member=is_member,
+                           members_data=members_data,  # <-- НОВАЯ ПЕРЕМЕННАЯ
+                           upcoming_trainings=upcoming_trainings)
 
 @app.route('/group_message/<int:message_id>/react', methods=['POST'])
 @login_required
@@ -6794,6 +6831,35 @@ def admin_prompts_activate(pid):
 
 
 # ===== ADMIN: Рассылки в Telegram =====
+
+@app.route("/admin/users/notify", methods=["POST"])
+@admin_required
+def admin_users_notify():
+    data = request.get_json(force=True, silent=True) or {}
+    user_ids = data.get("user_ids", [])
+    title = data.get("title", "").strip()
+    body = data.get("body", "").strip()
+
+    if not user_ids or not title or not body:
+        return jsonify({"ok": False, "error": "Не заполнены данные"}), 400
+
+    success_count = 0
+
+    # Получаем пользователей
+    users = User.query.filter(User.id.in_(user_ids)).all()
+
+    for u in users:
+        # Отправляем PUSH (функция сама разберется, есть ли токен)
+        sent = send_user_notification(
+            user_id=u.id,
+            title=title,
+            body=body,
+            type="info"  # Можно сделать настраиваемым
+        )
+        if sent:
+            success_count += 1
+
+    return jsonify({"ok": True, "sent": success_count, "total": len(users)})
 
 @app.route("/admin/broadcast", methods=["GET", "POST"])
 @admin_required

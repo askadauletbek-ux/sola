@@ -35,6 +35,9 @@ class User(db.Model):
     # Новое поле:
     step_goal = db.Column(db.Integer, default=10000, server_default='10000', nullable=False)
 
+    # Телефон (для профиля)
+    phone_number = db.Column(db.String(20), nullable=True)
+
     initial_body_analysis_id = db.Column(db.Integer, db.ForeignKey('body_analysis.id'), nullable=True)
     last_measurement_reminder_sent_at = db.Column(db.DateTime, nullable=True)
 

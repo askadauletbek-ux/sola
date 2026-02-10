@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Управление Отрядами</h1>
+            <p class="text-sm text-gray-500 mt-1">Полный контроль над группами, тренерами и активностью.</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{{ url_for('admin_dashboard') }}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm font-medium">
+                ← Назад в дашборд
+            </a>
+            <a href="{{ url_for('admin_dashboard') }}" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium shadow-sm">
+                + Создать (через Дашборд)
+            </a>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6">
+        {% for item in squads %}
+        {% set g = item.group %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition duration-200">
+            <div class="p-6">
+                <div class="flex flex-col md:flex-row justify-between gap-6">
+
+                    <div class="flex-1">
+                        <div class="flex items-center gap-3 mb-2">
+                            <h2 class="text-2xl font-bold text-gray-900">{{ g.name }}</h2>
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                ID: {{ g.id }}
+                            </span>
+                        </div>
+                        <p class="text-gray-500 text-sm mb-4 line-clamp-2">
+                            {{ g.description or 'Описание отсутствует' }}
+                        </p>
+
+                        <div class="flex items-center gap-6 text-sm">
+                            <div class="flex items-center gap-2 text-gray-600">
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                                <span class="font-semibold">{{ item.members_count }}</span> участников
+                            </div>
+                            <div class="flex items-center gap-2 text-gray-600">
+                                <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                <span class="font-semibold">{{ item.weekly_score }}</span> баллов (нед)
+                            </div>
+                            <div class="text-gray-400 text-xs">
+                                Дата создания: {{ g.created_at.strftime('%d.%m.%Y') }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="md:w-1/3 bg-gray-50 rounded-lg p-4 border border-gray-100">
+                        <div class="text-xs text-gray-500 uppercase font-semibold mb-2">Тренер</div>
+                        <div class="flex items-center gap-3">
+                            <div class="relative flex-shrink-0">
+                                {% if g.trainer.avatar %}
+                                    <img src="{{ url_for('serve_file', filename=g.trainer.avatar.filename) }}" class="w-10 h-10 rounded-full object-cover">
+                                {% else %}
+                                    <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+                                        {{ g.trainer.name[0] }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="overflow-hidden">
+                                <a href="{{ url_for('admin_user_detail', user_id=g.trainer.id) }}" class="font-medium text-gray-900 hover:text-indigo-600 truncate block">
+                                    {{ g.trainer.name }}
+                                </a>
+                                <p class="text-xs text-gray-500 truncate">{{ g.trainer.email }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-row md:flex-col gap-2 justify-center md:border-l md:pl-6 border-gray-100">
+                        <a href="{{ url_for('admin_edit_group', group_id=g.id) }}" class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-100 text-center">
+                            ✏️ Редактировать
+                        </a>
+                        <a href="{{ url_for('group_detail', group_id=g.id) }}" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 text-center">
+                            👁️ Открыть чат
+                        </a>
+                        <form action="{{ url_for('admin_delete_group', group_id=g.id) }}" method="POST" onsubmit="return confirm('Удалить отряд {{ g.name }}? Все участники будут исключены.');" class="w-full">
+                            <button class="w-full px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50">
+                                🗑️ Удалить
+                            </button>
+                        </form>
+                    </div>
+
+                </div>
+            </div>
+
+            {% if g.members %}
+            <div class="bg-gray-50 px-6 py-3 border-t border-gray-100 flex items-center gap-2 overflow-x-auto">
+                <span class="text-xs text-gray-500 mr-2">Состав:</span>
+                {% for m in g.members[:10] %}
+                    <a href="{{ url_for('admin_user_detail', user_id=m.user.id) }}" title="{{ m.user.name }}">
+                        {% if m.user.avatar %}
+                            <img src="{{ url_for('serve_file', filename=m.user.avatar.filename) }}" class="w-6 h-6 rounded-full border border-white ring-1 ring-gray-200 object-cover">
+                        {% else %}
+                            <div class="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-600 font-bold ring-1 ring-gray-200 border border-white">
+                                {{ m.user.name[0] }}
+                            </div>
+                        {% endif %}
+                    </a>
+                {% endfor %}
+                {% if g.members|length > 10 %}
+                    <span class="text-xs text-gray-400 ml-1">+{{ g.members|length - 10 }} еще</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        {% if not squads %}
+        <div class="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">Нет отрядов</h3>
+            <p class="mt-1 text-sm text-gray-500">Начните с создания первого отряда.</p>
+            <div class="mt-6">
+                <a href="{{ url_for('admin_dashboard') }}" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    Перейти в дашборд для создания
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
