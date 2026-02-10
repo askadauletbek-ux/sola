@@ -4971,14 +4971,24 @@ def admin_user_detail(user_id):
         activity_steps_values.append(activity_for_day.steps if activity_for_day else 0)
         activity_kcal_values.append(activity_for_day.active_kcal if activity_for_day else 0)
 
-    # For charts: last 30 days diet (calories)
-    diet_chart_labels = [d.strftime("%d.%m") for d in last_30_days]
-    diet_kcal_values = []
+    # --- НОВОЕ: График веса и жира ---
+    # Берем анализы за последние 30 дней и сортируем по возрастанию даты для графика
+    analyses_sorted = [b for b in body_analyses if b.timestamp.date() >= (today - timedelta(days=30))]
+    analyses_sorted.sort(key=lambda x: x.timestamp)
 
-    diet_map = {d.date: d for d in diets if d.date in last_30_days}  # optimize lookup
-    for d in last_30_days:
-        diet_for_day = diet_map.get(d)
-        diet_kcal_values.append(diet_for_day.total_kcal if diet_for_day else 0)
+    weight_chart_labels = [b.timestamp.strftime("%d.%m") for b in analyses_sorted]
+    weight_chart_values = [b.weight for b in analyses_sorted]
+    fat_chart_values = [b.fat_mass for b in analyses_sorted]
+
+    # --- НОВОЕ: Средние показатели за 7 дней ---
+    week_ago = today - timedelta(days=7)
+    avg_cals = db.session.query(func.avg(MealLog.calories)).filter(
+        MealLog.user_id == user.id, MealLog.date >= week_ago
+    ).scalar() or 0
+
+    avg_steps = db.session.query(func.avg(Activity.steps)).filter(
+        Activity.user_id == user.id, Activity.date >= week_ago
+    ).scalar() or 0
 
     return render_template(
         "admin_user_detail.html",
@@ -4993,8 +5003,12 @@ def admin_user_detail(user_id):
         activity_chart_labels=json.dumps(activity_chart_labels),
         activity_steps_values=json.dumps(activity_steps_values),
         activity_kcal_values=json.dumps(activity_kcal_values),
-        diet_chart_labels=json.dumps(diet_chart_labels),
-        diet_kcal_values=json.dumps(diet_kcal_values),
+        # Новые данные для графиков и KPI
+        weight_chart_labels=json.dumps(weight_chart_labels),
+        weight_chart_values=json.dumps(weight_chart_values),
+        fat_chart_values=json.dumps(fat_chart_values),
+        avg_cals=int(avg_cals),
+        avg_steps=int(avg_steps),
         today=today
     )
 
@@ -5012,6 +5026,30 @@ def admin_user_edit(user_id):
     user.name = request.form["name"].strip()
     user.email = request.form["email"].strip()
     user.is_trainer = 'is_trainer' in request.form  # Update trainer status
+
+    # --- НОВОЕ: Обработка целей ---
+    if request.form.get("step_goal"):
+        try:
+            user.step_goal = int(request.form.get("step_goal"))
+        except ValueError:
+            pass
+
+    if request.form.get("weight_goal"):
+        try:
+            user.weight_goal = float(request.form.get("weight_goal"))
+        except ValueError:
+            pass
+
+    if request.form.get("fat_mass_goal"):
+        try:
+            user.fat_mass_goal = float(request.form.get("fat_mass_goal"))
+        except ValueError:
+            pass
+
+    if 'reset_onboarding' in request.form:
+        user.onboarding_complete = False
+        user.onboarding_v2_complete = False
+    # --------------------------------
 
     dob = request.form.get("date_of_birth")
     user.date_of_birth = datetime.strptime(dob, "%Y-%m-%d").date() if dob else None
@@ -5034,11 +5072,17 @@ def admin_user_edit(user_id):
         file = request.files['avatar']
         if file.filename != '':
             filename = secure_filename(file.filename)
-            # You might want to delete the old avatar file here if it exists
-            # os.remove(os.path.join(app.config['UPLOAD_FOLDER'], user.avatar))
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
-            user.avatar = filename
+            file_data = file.read()
+            new_file = UploadedFile(
+                filename=filename,
+                content_type=file.mimetype,
+                data=file_data,
+                size=len(file_data),
+                user_id=user.id
+            )
+            db.session.add(new_file)
+            db.session.flush()
+            user.avatar_file_id = new_file.id
 
     try:
         db.session.commit()
@@ -5048,7 +5092,6 @@ def admin_user_edit(user_id):
         flash("Ошибка при обновлении пользователя. Возможно, email уже используется.", "error")
 
     return redirect(url_for("admin_user_detail", user_id=user.id))
-
 
 @app.route("/admin/user/<int:user_id>/delete", methods=["POST"])
 @admin_required
@@ -6778,38 +6821,6 @@ def admin_broadcast():
         return redirect(url_for("admin_broadcast"))
     return render_template("admin_broadcast.html")
 
-
-
-@app.get("/admin/impersonate/<int:user_id>")
-@admin_required
-def admin_impersonate_user(user_id):
-    target = db.session.get(User, user_id) or abort(404)
-    admin_id = session.get("user_id")
-    # сохраняем, чтобы можно было вернуться
-    session["impersonator_id"] = admin_id
-    session["user_id"] = target.id
-    flash(f"Вы вошли как {target.name} (ID {target.id}).", "success")
-    try:
-        log_audit("impersonate_start", "User", target.id, old={"admin": admin_id})
-    except Exception:
-        pass
-    return redirect(url_for("profile"))
-
-
-@app.get("/admin/impersonate/stop")
-def admin_stop_impersonation():
-    impersonator = session.pop("impersonator_id", None)
-    if impersonator:
-        session["user_id"] = impersonator
-        flash("Возвращён доступ администратора.", "success")
-        try:
-            log_audit("impersonate_stop", "User", impersonator)
-        except Exception:
-            pass
-    else:
-        flash("Режим имперсонации не активен.", "error")
-    # возвращаемся в админку, если есть user_id, иначе на дашборд
-    return redirect(url_for("admin_dashboard"))
 
 @app.post("/admin/users/<int:user_id>/telegram/test")
 @admin_required

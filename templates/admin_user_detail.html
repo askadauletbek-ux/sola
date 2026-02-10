@@ -1,575 +1,552 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<!-- Грузим Chart.js при необходимости и пробрасываем данные из Jinja в window -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <script>
-  if (!window.Chart) {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
-    s.defer = true;
-    document.head.appendChild(s);
-  }
-  window._activityData = {
-    labels: {{ activity_chart_labels|tojson }},
-    steps:  {{ activity_steps_values|tojson }},
-    kcal:   {{ activity_kcal_values|tojson }}
+  window._chartsData = {
+    activityLabels: {{ activity_chart_labels|safe }},
+    steps: {{ activity_steps_values|safe }},
+    kcal: {{ activity_kcal_values|safe }},
+    weightLabels: {{ weight_chart_labels|safe }},
+    weight: {{ weight_chart_values|safe }},
+    fat: {{ fat_chart_values|safe }}
   };
 </script>
 
-<div class="max-w-7xl mx-auto px-4 py-6"
+<div class="max-w-7xl mx-auto px-4 py-8"
      x-data="{
-       /* --- utils --- */
-       parseAny(v){
-         try{
-           let out = v;
-           if (typeof out === 'string') out = JSON.parse(out);
-           return Array.isArray(out) ? out : [];
-         }catch(_e){ return []; }
-       },
-       ensureChartReady(cb){
-         if (window.Chart) return cb();
-         let tries = 0;
-         const t = setInterval(() => {
-           if (window.Chart || tries++ > 100){ clearInterval(t); if (window.Chart) cb(); }
-         }, 40);
-         window.addEventListener('load', () => { if (window.Chart) cb(); }, { once:true });
-       },
+       tab: 'overview',
+       isSubModalOpen: false,
+       unlinkOpen: false,
 
-       /* --- toast --- */
-       toasts: [],
-       toast(text, type='ok'){ const id=Date.now()+Math.random(); this.toasts.push({id,text,type}); setTimeout(()=>this.dismissToast(id), 3500); },
-       dismissToast(id){ this.toasts = this.toasts.filter(t=>t.id!==id); },
-       copy(v){ navigator.clipboard.writeText(v).then(()=>this.toast('Скопировано')).catch(()=>this.toast('Не удалось скопировать','err')); },
-
-       /* --- локальные флаги --- */
-       openTest:false, unlinkOpen:false,
-       isModalOpen:false,
-
-       /* --- фильтры --- */
-       mealQ:'', mealType:'',
-       bodyQ:'', dietQ:'',
-       filterMeal(dateISO, type, name, analysis){
-         const q = this.mealQ.toLowerCase().trim();
-         const okQ = !q || (name.toLowerCase().includes(q) || analysis.toLowerCase().includes(q));
-         const okT = !this.mealType || (type === this.mealType);
-         return okQ && okT;
-       },
-       filterBody(dt, w, m, f, bmi, meta){
-         const q = this.bodyQ.toLowerCase().trim();
-         if(!q) return true;
-         return [dt,w,m,f,bmi,meta].some(v => (''+v).toLowerCase().includes(q));
-       },
-       filterDiet(dt, kcal){
-         const q = this.dietQ.toLowerCase().trim();
-         if(!q) return true;
-         return (dt.toLowerCase().includes(q) || (''+kcal).toLowerCase().includes(q));
-       },
-
-       /* --- данные для графиков --- */
-       labels: [],
-       steps:  [],
-       kcal:   [],
-
-       /* --- init --- */
-       init(){
-         const raw = window._activityData || {};
-         this.labels = this.parseAny(raw.labels);
-         this.steps  = this.parseAny(raw.steps);
-         this.kcal   = this.parseAny(raw.kcal);
-
+       init() {
          this.$nextTick(() => {
-           this.ensureChartReady(() => this.makeCharts());
+            this.renderCharts();
          });
        },
 
-       /* --- построение графиков --- */
-       makeCharts(){
-         const labels = this.labels, steps = this.steps, kcal = this.kcal;
-
-         const sctx = document.getElementById('stepsChart');
-         if (sctx && labels.length && steps.length){
-           new Chart(sctx, {
-             type: 'line',
-             data: { labels, datasets: [{ label: 'Шаги', data: steps, borderColor:'rgb(54,162,235)', backgroundColor:'rgba(54,162,235,0.2)', fill:true, tension:0.15 }]},
-             options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true }}, plugins:{ legend:{ display:false }}}
-           });
+       renderCharts() {
+         // График активности
+         const ctxSteps = document.getElementById('stepsChart');
+         if (ctxSteps) {
+             new Chart(ctxSteps, {
+                 type: 'bar',
+                 data: {
+                     labels: window._chartsData.activityLabels,
+                     datasets: [
+                         { label: 'Шаги', data: window._chartsData.steps, backgroundColor: '#3b82f6', yAxisID: 'y' },
+                         { label: 'Ккал', data: window._chartsData.kcal, type: 'line', borderColor: '#ef4444', yAxisID: 'y1' }
+                     ]
+                 },
+                 options: {
+                     responsive: true,
+                     maintainAspectRatio: false,
+                     scales: {
+                         y: { type: 'linear', display: true, position: 'left' },
+                         y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false } }
+                     }
+                 }
+             });
          }
 
-         const kctx = document.getElementById('kcalChart');
-         if (kctx && labels.length && kcal.length){
-           new Chart(kctx, {
-             type: 'line',
-             data: { labels, datasets: [{ label: 'Активные калории', data: kcal, borderColor:'rgb(75,192,192)', backgroundColor:'rgba(75,192,192,0.2)', fill:true, tension:0.15 }]},
-             options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true }}, plugins:{ legend:{ display:false }}}
-           });
+         // График веса
+         const ctxBody = document.getElementById('bodyChart');
+         if (ctxBody) {
+             new Chart(ctxBody, {
+                 type: 'line',
+                 data: {
+                     labels: window._chartsData.weightLabels,
+                     datasets: [
+                         { label: 'Вес (кг)', data: window._chartsData.weight, borderColor: '#10b981', tension: 0.3 },
+                         { label: 'Жир (кг)', data: window._chartsData.fat, borderColor: '#f59e0b', tension: 0.3 }
+                     ]
+                 },
+                 options: { responsive: true, maintainAspectRatio: false }
+             });
          }
        }
      }"
 >
-  <style>
-    [x-cloak]{display:none!important;}
-    .chart-wrap{position:relative; height:260px;}
-    .chart-wrap canvas{display:block; width:100% !important; height:100% !important;}
-    @media (max-width: 640px){ .chart-wrap{height:220px;} }
-  </style>
 
-  <!-- toasts -->
-  <div class="fixed right-4 top-4 space-y-2 z-50" x-cloak>
-    <template x-for="t in toasts" :key="t.id">
-      <div x-text="t.text"
-           class="rounded-lg px-3 py-2 text-sm text-white shadow"
-           :class="t.type==='ok' ? 'bg-emerald-600' : 'bg-red-600'"
-           x-transition
-           @click="dismissToast(t.id)"></div>
-    </template>
-  </div>
+  <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+    <div class="flex items-center gap-4">
+      <div class="relative">
+        {% if user.avatar %}
+          <img src="{{ url_for('serve_file', filename=user.avatar.filename) }}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200">
+        {% else %}
+          <div class="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-xl font-bold">
+            {{ user.name[:1] }}
+          </div>
+        {% endif %}
+        {% if user.is_trainer %}
+          <span class="absolute -bottom-1 -right-1 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">Тренер</span>
+        {% endif %}
+      </div>
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">{{ user.name }}</h1>
+        <div class="text-sm text-gray-500 flex flex-wrap gap-3 items-center mt-1">
+          <span>ID: {{ user.id }}</span>
+          <span>•</span>
+          <span>{{ user.email }}</span>
 
-  <h1 class="text-3xl font-bold mb-6">
-    Детали пользователя: {{ user.name }} (ID: {{ user.id }})
-  </h1>
+          {% if user.fcm_device_token %}
+             <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs" title="Push уведомления работают">📱 Push Active</span>
+          {% else %}
+             <span class="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-xs" title="Устройство не зарегистрировано">🔕 No Push</span>
+          {% endif %}
 
-  <div class="flex items-center gap-3 mb-6">
-    <a href="{{ url_for('admin_dashboard') }}"
-       class="inline-flex items-center px-4 py-2 border border-gray-200 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-      ← Назад к панели
-    </a>
+          {% if user.telegram_chat_id %}
+             <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">✈️ Telegram</span>
+          {% endif %}
 
-    <!-- Быстрые действия -->
-    <div class="flex flex-wrap gap-2">
-      <form method="post" action="{{ url_for('admin_send_magic_link', user_id=user.id) }}">
-        <button class="px-3 py-2 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 text-sm">🔗 Магическая ссылка</button>
-      </form>
-      <a href="{{ url_for('admin_impersonate_user', user_id=user.id) }}"
-         class="px-3 py-2 rounded-lg text-white bg-amber-600 hover:bg-amber-700 text-sm">👤 Имперсонация</a>
-      <form method="post" action="{{ url_for('admin_user_export', user_id=user.id) }}" class="inline">
-        <input type="hidden" name="format" value="json">
-        <button class="px-3 py-2 rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 text-sm">⬇ JSON</button>
-      </form>
-      <form method="post" action="{{ url_for('admin_user_export', user_id=user.id) }}" class="inline">
-        <input type="hidden" name="format" value="csv">
-        <button class="px-3 py-2 rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 text-sm">⬇ CSV</button>
-      </form>
+          {% if user.is_verified %}
+             <span class="bg-teal-100 text-teal-700 px-2 py-0.5 rounded text-xs">Verified</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-2">
+      <a href="{{ url_for('admin_dashboard') }}" class="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm font-medium">← Назад</a>
     </div>
   </div>
 
-  <div class="grid lg:grid-cols-3 gap-6">
-    <!-- Сайдбар -->
-    <div class="lg:col-span-1 space-y-6 h-fit lg:sticky lg:top-6">
-      <!-- Профиль -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-lg font-semibold mb-4">Информация о пользователе</h2>
-        <form method="post" action="{{ url_for('admin_user_edit', user_id=user.id) }}" enctype="multipart/form-data" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium">Имя</label>
-            <input type="text" name="name" value="{{ user.name }}" class="mt-1 w-full border rounded-md px-3 py-2" required>
-          </div>
-          <div>
-            <label class="block text-sm font-medium">Email</label>
-            <input type="email" name="email" value="{{ user.email }}" class="mt-1 w-full border rounded-md px-3 py-2" required>
-          </div>
-          <div>
-            <label class="block text-sm font-medium">Дата рождения</label>
-            <input type="date" name="date_of_birth" value="{{ user.date_of_birth.isoformat() if user.date_of_birth else '' }}" class="mt-1 w-full border rounded-md px-3 py-2">
-          </div>
-          <div>
-            <label class="block text-sm font-medium">Новый пароль (необязательно)</label>
-            <input type="password" name="password" class="mt-1 w-full border rounded-md px-3 py-2">
-          </div>
-          <label class="inline-flex items-center gap-2">
-            <input type="checkbox" name="is_trainer" value="true" {% if user.is_trainer %}checked{% endif %} class="h-4 w-4 rounded border-gray-300 text-blue-600">
-            <span class="text-sm">Является тренером</span>
-          </label>
-          <div>
-            <label class="block text-sm font-medium">Аватар</label>
-            <input type="file" name="avatar" accept="image/*" class="mt-1 w-full border rounded-md px-3 py-2">
-            {% if user.avatar %}
-                            <img src="{{ url_for('serve_file', filename=user.avatar.filename) }}" alt="Avatar" class="w-16 h-16 rounded-full object-cover">
+  <div class="border-b border-gray-200 mb-6">
+    <nav class="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
+      <button @click="tab = 'overview'"
+              :class="tab === 'overview' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+              class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+        Обзор
+      </button>
+      <button @click="tab = 'body'"
+              :class="tab === 'body' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+              class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+        Тело и Здоровье
+      </button>
+      <button @click="tab = 'nutrition'"
+              :class="tab === 'nutrition' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+              class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+        Питание (Логи)
+      </button>
+      <button @click="tab = 'settings'"
+              :class="tab === 'settings' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+              class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+        Редактирование
+      </button>
+    </nav>
+  </div>
 
+  <div x-show="tab === 'overview'" x-cloak class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <div class="lg:col-span-2 space-y-6">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="text-xs text-gray-500 uppercase">Стрик</div>
+                <div class="text-2xl font-bold text-indigo-600">{{ user.current_streak }} 🔥</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="text-xs text-gray-500 uppercase">Ср. шаги (7д)</div>
+                <div class="text-2xl font-bold">{{ avg_steps }}</div>
+                <div class="text-xs text-gray-400">Цель: {{ user.step_goal }}</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="text-xs text-gray-500 uppercase">Ср. ккал (7д)</div>
+                <div class="text-2xl font-bold">{{ avg_cals }}</div>
+                <div class="text-xs text-gray-400">Цель: {{ user.target_calories }}</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="text-xs text-gray-500 uppercase">Отряд</div>
+                {% if user.groups.first() %}
+                    <a href="{{ url_for('group_detail', group_id=user.groups.first().group_id) }}" class="text-lg font-bold text-blue-600 hover:underline truncate block">
+                        {{ user.groups.first().group.name }}
+                    </a>
+                {% else %}
+                    <div class="text-lg font-bold text-gray-400">Нет</div>
+                {% endif %}
+                <div class="text-xs text-gray-400">Статус: {{ user.squad_status }}</div>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 class="font-semibold mb-4">Активность (30 дней)</h3>
+            <div class="h-64">
+                <canvas id="stepsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="space-y-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 class="font-semibold mb-4 flex items-center justify-between">
+                Подписка
+                <span class="px-2 py-1 text-xs rounded-full
+                    {% if user.has_subscription %} bg-green-100 text-green-700 {% else %} bg-red-100 text-red-700 {% endif %}">
+                    {{ 'Активна' if user.has_subscription else 'Неактивна' }}
+                </span>
+            </h3>
+
+            {% if user.subscription %}
+                <div class="space-y-2 text-sm text-gray-600 mb-4">
+                    <div class="flex justify-between"><span>Начало:</span> <span class="font-medium">{{ user.subscription.start_date }}</span></div>
+                    <div class="flex justify-between"><span>Конец:</span> <span class="font-medium">{{ user.subscription.end_date or 'Безлимит' }}</span></div>
+                    <div class="flex justify-between"><span>Статус БД:</span> <span>{{ user.subscription.status }}</span></div>
+                </div>
+            {% else %}
+                <p class="text-sm text-gray-500 mb-4">Записей о подписке не найдено.</p>
             {% endif %}
+
+            <button @click="isSubModalOpen = true" class="w-full py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 font-medium text-sm">
+                Управление подпиской
+            </button>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 class="font-semibold mb-2">Быстрый вход</h3>
+            <p class="text-xs text-gray-500 mb-3">Сгенерировать ссылку для входа без пароля.</p>
+            <form method="post" action="{{ url_for('admin_send_magic_link', user_id=user.id) }}">
+                <button class="w-full py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 text-sm">
+                    🔗 Отправить Magic Link
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+             <h3 class="font-semibold mb-2">Экспорт данных</h3>
+             <div class="flex gap-2">
+                 <form method="post" action="{{ url_for('admin_user_export', user_id=user.id) }}" class="flex-1">
+                    <input type="hidden" name="format" value="json">
+                    <button class="w-full py-2 border rounded-lg hover:bg-gray-50 text-sm">JSON</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_user_export', user_id=user.id) }}" class="flex-1">
+                    <input type="hidden" name="format" value="csv">
+                    <button class="w-full py-2 border rounded-lg hover:bg-gray-50 text-sm">CSV</button>
+                  </form>
+             </div>
+        </div>
+    </div>
+  </div>
+
+  <div x-show="tab === 'body'" x-cloak class="space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+             <h3 class="font-semibold mb-4">Динамика веса и жира</h3>
+             <div class="h-80">
+                 <canvas id="bodyChart"></canvas>
+             </div>
           </div>
 
-          <div class="flex justify-end">
-            <button class="px-4 py-2 rounded-lg text-white bg-blue-600 hover:bg-blue-700">
-              Сохранить изменения
-            </button>
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+             <h3 class="font-semibold mb-4">Текущие параметры</h3>
+             {% set latest = user.latest_analysis %}
+             {% if latest %}
+                 <div class="space-y-4">
+                     <div>
+                         <div class="text-sm text-gray-500">Вес</div>
+                         <div class="text-2xl font-bold">{{ latest.weight }} <span class="text-sm font-normal text-gray-400">кг</span></div>
+                     </div>
+                     <div>
+                        <div class="text-sm text-gray-500">Жир</div>
+                        <div class="text-xl font-semibold">{{ latest.fat_mass }} <span class="text-sm font-normal text-gray-400">кг</span> ({{ "%.1f"|format(latest.fat_mass / latest.weight * 100) if latest.weight else 0 }}%)</div>
+                    </div>
+                    <div>
+                        <div class="text-sm text-gray-500">Мышцы</div>
+                        <div class="text-xl font-semibold">{{ latest.muscle_mass }} <span class="text-sm font-normal text-gray-400">кг</span></div>
+                    </div>
+                    <div>
+                        <div class="text-sm text-gray-500">BMR (Метаболизм)</div>
+                        <div class="text-xl font-semibold">{{ latest.metabolism }} <span class="text-sm font-normal text-gray-400">ккал</span></div>
+                    </div>
+                 </div>
+                 <div class="mt-4 pt-4 border-t text-xs text-gray-400">
+                     Дата замера: {{ latest.timestamp.strftime('%d.%m.%Y %H:%M') }}
+                 </div>
+             {% else %}
+                 <p class="text-gray-500">Нет данных замеров.</p>
+             {% endif %}
           </div>
-        </form>
       </div>
 
-      <!-- Telegram -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-lg font-semibold mb-4">Telegram</h2>
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="px-6 py-4 border-b bg-gray-50">
+              <h3 class="font-semibold">История замеров</h3>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-sm text-left">
+                <thead class="bg-gray-50 text-gray-500">
+                    <tr>
+                        <th class="px-6 py-3">Дата</th>
+                        <th class="px-6 py-3">Вес</th>
+                        <th class="px-6 py-3">Жир</th>
+                        <th class="px-6 py-3">Мышцы</th>
+                        <th class="px-6 py-3">Вода</th>
+                        <th class="px-6 py-3">Висц.</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for a in body_analyses %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-3 whitespace-nowrap">{{ a.timestamp.strftime('%d.%m.%Y') }}</td>
+                        <td class="px-6 py-3 font-medium">{{ a.weight }}</td>
+                        <td class="px-6 py-3">{{ a.fat_mass }}</td>
+                        <td class="px-6 py-3">{{ a.muscle_mass }}</td>
+                        <td class="px-6 py-3">{{ a.body_water }}</td>
+                        <td class="px-6 py-3">{{ a.visceral_fat_rating }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+          </div>
+      </div>
+  </div>
 
-        {% if user.telegram_chat_id %}
-          <div class="text-sm mb-3">
-            <div class="text-gray-500">Привязан:</div>
-            <div class="font-medium break-all flex items-center gap-2">
-              chat_id: {{ user.telegram_chat_id }}
-              <button type="button" class="px-2 py-1 text-xs rounded bg-gray-100 hover:bg-gray-200"
-                      @click="copy('{{ user.telegram_chat_id }}')">копировать</button>
+  <div x-show="tab === 'nutrition'" x-cloak>
+
+    {% set photos = meal_logs|selectattr("image_path")|list %}
+    {% if photos %}
+    <div class="mb-8">
+        <h3 class="text-lg font-semibold mb-4">Галерея блюд (Последние фото)</h3>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {% for meal in photos[:12] %}
+            <div class="group relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer border">
+                <img src="{{ url_for('serve_file', filename=meal.image_path.split('/')[-1]) }}"
+                     class="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                     loading="lazy"
+                     alt="{{ meal.name }}">
+                <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex flex-col justify-end p-2">
+                    <span class="text-white text-xs font-bold truncate">{{ meal.name }}</span>
+                    <span class="text-white text-xs">{{ meal.calories }} ккал</span>
+                    <span class="text-gray-300 text-[10px]">{{ meal.date.strftime('%d.%m') }}</span>
+                </div>
             </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+            <h3 class="font-semibold">Лог питания</h3>
+            <span class="text-xs text-gray-500">Всего записей: {{ meal_logs|length }}</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm text-left">
+              <thead class="bg-gray-50 text-gray-500">
+                  <tr>
+                      <th class="px-6 py-3">Дата</th>
+                      <th class="px-6 py-3">Тип</th>
+                      <th class="px-6 py-3">Блюдо</th>
+                      <th class="px-6 py-3">Ккал</th>
+                      <th class="px-6 py-3">Б/Ж/У</th>
+                      <th class="px-6 py-3">AI Флаг</th>
+                  </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                  {% for m in meal_logs %}
+                  <tr class="hover:bg-gray-50">
+                      <td class="px-6 py-3 whitespace-nowrap">{{ m.date.strftime('%d.%m') }}</td>
+                      <td class="px-6 py-3">
+                          <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100">
+                              {{ m.meal_type }}
+                          </span>
+                      </td>
+                      <td class="px-6 py-3 font-medium text-gray-900">{{ m.name }}</td>
+                      <td class="px-6 py-3">{{ m.calories }}</td>
+                      <td class="px-6 py-3 text-xs text-gray-500">{{ m.protein }} / {{ m.fat }} / {{ m.carbs }}</td>
+                      <td class="px-6 py-3">
+                          {% if m.is_flagged %}
+                              <span class="text-red-500 font-bold">⚠️</span>
+                          {% else %}
+                              <span class="text-gray-300">•</span>
+                          {% endif %}
+                      </td>
+                  </tr>
+                  {% endfor %}
+              </tbody>
+          </table>
+        </div>
+    </div>
+  </div>
+
+  <div x-show="tab === 'settings'" x-cloak class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 class="text-lg font-bold mb-6">Редактирование профиля</h3>
+          <form method="post" action="{{ url_for('admin_user_edit', user_id=user.id) }}" enctype="multipart/form-data" class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                  <div>
+                      <label class="block text-sm font-medium text-gray-700">Имя</label>
+                      <input type="text" name="name" value="{{ user.name }}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm border p-2">
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Дата рождения</label>
+                    <input type="date" name="date_of_birth" value="{{ user.date_of_birth.isoformat() if user.date_of_birth else '' }}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm border p-2">
+                </div>
+              </div>
+
+              <div>
+                  <label class="block text-sm font-medium text-gray-700">Email</label>
+                  <input type="email" name="email" value="{{ user.email }}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm border p-2">
+              </div>
+
+              <div class="pt-4 border-t border-gray-100">
+                  <h4 class="text-sm font-bold text-gray-900 mb-3">Цели и Нормы</h4>
+                  <div class="grid grid-cols-3 gap-3">
+                      <div>
+                          <label class="block text-xs font-medium text-gray-500">Цель Вес (кг)</label>
+                          <input type="number" step="0.1" name="weight_goal" value="{{ user.weight_goal or '' }}" class="mt-1 w-full rounded-md border p-2 text-sm">
+                      </div>
+                      <div>
+                          <label class="block text-xs font-medium text-gray-500">Цель Жир (кг)</label>
+                          <input type="number" step="0.1" name="fat_mass_goal" value="{{ user.fat_mass_goal or '' }}" class="mt-1 w-full rounded-md border p-2 text-sm">
+                      </div>
+                      <div>
+                          <label class="block text-xs font-medium text-gray-500">Цель Шаги</label>
+                          <input type="number" name="step_goal" value="{{ user.step_goal }}" class="mt-1 w-full rounded-md border p-2 text-sm">
+                      </div>
+                  </div>
+              </div>
+
+              <div class="pt-4 border-t border-gray-100">
+                   <label class="block text-sm font-medium text-gray-700">Сменить аватар</label>
+                   <input type="file" name="avatar" class="mt-1 block w-full text-sm">
+              </div>
+
+              <div class="pt-4 border-t border-gray-100">
+                  <label class="flex items-center gap-2">
+                      <input type="checkbox" name="is_trainer" {% if user.is_trainer %}checked{% endif %} class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                      <span class="text-sm font-medium text-gray-700">Права тренера</span>
+                  </label>
+
+                  <label class="flex items-center gap-2 mt-2">
+                      <input type="checkbox" name="reset_onboarding" class="h-4 w-4 text-red-600 border-gray-300 rounded">
+                      <span class="text-sm font-medium text-red-600">Сбросить флаг прохождения онбординга</span>
+                  </label>
+              </div>
+
+              <div class="pt-4">
+                  <button type="submit" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">
+                      Сохранить изменения
+                  </button>
+              </div>
+          </form>
+      </div>
+
+      <div class="space-y-6">
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+              <h3 class="text-lg font-bold mb-4">Telegram Bot</h3>
+              {% if user.telegram_chat_id %}
+                  <div class="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm mb-4">
+                      Привязан ID: <strong>{{ user.telegram_chat_id }}</strong>
+                  </div>
+                  <div class="flex flex-col gap-2">
+                    <form method="post" action="{{ url_for('admin_user_send_test_tg', user_id=user.id) }}">
+                        <button class="w-full px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                            Отправить тест
+                        </button>
+                    </form>
+                    <button @click="unlinkOpen = true" class="w-full px-4 py-2 border border-red-200 text-red-600 rounded text-sm hover:bg-red-50">
+                        Отвязать
+                    </button>
+                  </div>
+              {% else %}
+                  <div class="text-sm text-gray-500">Нет привязки.</div>
+              {% endif %}
           </div>
 
-          <div class="flex flex-col gap-2">
-            <button class="px-3 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700"
-                    @click="openTest = !openTest">
-              ✉️ Отправить тест-сообщение
-            </button>
-            <form x-show="openTest" x-cloak method="post" action="{{ url_for('admin_user_send_test_tg', user_id=user.id) }}" class="space-y-2">
-              <textarea name="text" rows="3" class="w-full border rounded-lg px-3 py-2" placeholder="Текст…">Привет, {{ user.name }}! Это тестовое сообщение 💬</textarea>
-              <button class="px-3 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700">Отправить</button>
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-red-100">
+              <h3 class="text-lg font-bold text-red-600 mb-4">Опасная зона</h3>
+              <form action="{{ url_for('admin_delete_user', user_id=user.id) }}" method="POST"
+                    onsubmit="return confirm('Вы уверены? Удалятся ВСЕ данные (логи, анализы, подписки). Отменить нельзя.');">
+                  <button class="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-bold">
+                      Удалить пользователя навсегда
+                  </button>
+              </form>
+          </div>
+      </div>
+  </div>
+
+  <div x-show="isSubModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+      <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="isSubModalOpen = false" aria-hidden="true"></div>
+      <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+
+      <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+        <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg leading-6 font-medium text-gray-900">Управление подпиской</h3>
+
+            <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}" class="mt-4 space-y-4">
+                <input type="hidden" name="action" value="grant">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Срок</label>
+                    <div class="mt-1 grid grid-cols-3 gap-2">
+                        <label class="border p-2 rounded text-center cursor-pointer hover:bg-gray-50 text-sm">
+                            <input type="radio" name="duration" value="1m" class="sr-only"> 1 мес
+                        </label>
+                        <label class="border p-2 rounded text-center cursor-pointer hover:bg-gray-50 text-sm">
+                            <input type="radio" name="duration" value="3m" class="sr-only"> 3 мес
+                        </label>
+                        <label class="border p-2 rounded text-center cursor-pointer hover:bg-gray-50 text-sm">
+                            <input type="radio" name="duration" value="unlimited" class="sr-only"> Вечно
+                        </label>
+                    </div>
+                </div>
+                <div>
+                     <label class="block text-sm font-medium text-gray-700">Дата старта</label>
+                     <input type="date" name="start_date" value="{{ today.isoformat() }}" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-2">
+                </div>
+                <button class="w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700">Сохранить</button>
             </form>
 
-            <button class="px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
-                    @click="unlinkOpen = true">
-              🔄 Отвязать Telegram
-            </button>
-            <!-- подтверждение отвязки -->
-            <div x-show="unlinkOpen" x-cloak class="fixed inset-0 z-40 flex items-center justify-center">
-              <div class="absolute inset-0 bg-black/40" @click="unlinkOpen=false"></div>
-              <div class="relative bg-white rounded-lg shadow p-6 w-full max-w-md">
-                <h3 class="text-lg font-semibold mb-2">Отвязать Telegram?</h3>
-                <p class="text-sm text-gray-600">Пользователь потеряет связь с ботом до повторной привязки.</p>
-                <div class="mt-4 flex justify-end gap-2">
-                  <button class="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200" @click="unlinkOpen=false">Отмена</button>
-                  <form method="post" action="{{ url_for('admin_user_unlink_telegram', user_id=user.id) }}">
-                    <button class="px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700">Отвязать</button>
-                  </form>
-                </div>
-              </div>
-            </div>
-          </div>
-        {% else %}
-          <div class="text-sm text-gray-600">Telegram не привязан.</div>
-          <p class="text-xs text-gray-500 mt-1">Попроси пользователя открыть бота и пройти привязку по коду/ссылке.</p>
-          <form method="post" action="{{ url_for('admin_send_magic_link', user_id=user.id) }}" class="mt-3">
-            <button class="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Отправить ссылку на вход</button>
-          </form>
-        {% endif %}
-      </div>
-
-      <!-- Подписка (модалка внутри) -->
-    <div class="bg-white shadow rounded-lg p-6" >
-        <h2 class="text-lg font-semibold mb-3">Подписка</h2>
-        <button @click="isModalOpen=true" type="button"
-                class="w-full px-4 py-2 rounded-lg text-white text-sm font-medium
-                  {% if user.subscription and user.subscription.is_active %} bg-green-600 hover:bg-green-700
-                  {% elif user.subscription and user.subscription.status == 'frozen' %} bg-sky-600 hover:bg-sky-700
-                  {% else %} bg-gray-500 hover:bg-gray-600 {% endif %}">
-          {% if user.subscription and user.subscription.is_active %}
-            {% if user.subscription.end_date %} ✅ Активна до {{ user.subscription.end_date.strftime('%d.%m.%Y') }} {% else %} ✅ Безлимитная {% endif %}
-          {% elif user.subscription and user.subscription.status == 'frozen' %}
-            ❄️ Заморожена (осталось {{ user.subscription.remaining_days_on_freeze }} дн.)
-          {% else %}
-            ❌ Неактивна
-          {% endif %}
-          (Управлять)
-        </button>
-
-        <div style="z-index:17" x-show="isModalOpen" x-cloak class="fixed inset-0 z-40 flex items-center justify-center p-4">
-          <div class="absolute inset-0 bg-black/40" @click="isModalOpen=false"></div>
-
-          <div class="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6" @click.stop>
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <h3 class="text-xl font-semibold">Управление подпиской</h3>
-                {% if user.subscription %}
-                  <p class="text-sm text-gray-600 mt-1">
-                    Текущий статус:
-                    <span class="font-medium px-2 py-0.5 rounded
-                      {% if user.subscription.is_active %} bg-green-100 text-green-800
-                      {% elif user.subscription.status == 'frozen' %} bg-sky-100 text-sky-800
-                      {% else %} bg-gray-100 text-gray-800 {% endif %}">
-                      {% if user.subscription.is_active %}Активна{% elif user.subscription.status=='frozen' %}Заморожена{% else %}Неактивна{% endif %}
-                    </span>
-                    {% if user.subscription.start_date %} • Начало: {{ user.subscription.start_date.strftime('%d.%m.%Y') }}{% endif %}
-                    {% if user.subscription.end_date %} • Конец: {{ user.subscription.end_date.strftime('%d.%m.%Y') }}{% endif %}
-                  </p>
-                {% else %}
-                  <p class="text-sm text-gray-600 mt-1">Подписка у пользователя отсутствует.</p>
-                {% endif %}
-              </div>
-              <button class="p-1 rounded-full text-gray-500 hover:bg-gray-100" @click="isModalOpen=false" aria-label="Закрыть">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            <div class="mt-6 grid md:grid-cols-2 gap-6">
-              <div class="space-y-4">
-                <h4 class="font-semibold text-gray-800">
-                  {% if user.subscription %}Обновить подписку{% else %}Выдать новую подписку{% endif %}
-                </h4>
-                <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}" class="space-y-4">
-                  <input type="hidden" name="action" value="grant">
-
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Длительность</label>
-                    <div class="grid grid-cols-2 gap-2 text-sm">
-                      {% set durations = [('1m', '1 месяц'), ('3m', '3 месяца'), ('6m', '6 месяцев'), ('12m', '12 месяцев')] %}
-                      {% for value, label in durations %}
-                      <label class="flex items-center gap-2 p-2 border rounded-lg cursor-pointer hover:bg-gray-50">
-                        <input type="radio" name="duration" value="{{ value }}" class="h-4 w-4 text-blue-600 border-gray-300">
-                        <span>{{ label }}</span>
-                      </label>
-                      {% endfor %}
-                      <label class="flex items-center gap-2 p-2 border rounded-lg cursor-pointer hover:bg-gray-50 col-span-2">
-                        <input type="radio" name="duration" value="unlimited" class="h-4 w-4 text-blue-600 border-gray-300">
-                        <span>Безлимитная</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label for="start_date" class="block text-sm font-medium text-gray-700">Дата начала (если пусто - сегодня)</label>
-                    <input type="date" name="start_date" id="start_date" value="{{ today.isoformat() }}"
-                           class="mt-1 w-full border rounded-md px-3 py-2 text-sm">
-                  </div>
-
-                  <button type="submit" class="w-full px-4 py-2 rounded-lg text-white bg-blue-600 hover:bg-blue-700 font-semibold">
-                    Выдать / Обновить
-                  </button>
+            <div class="border-t my-4 pt-4 flex gap-2">
+                {% if user.subscription and user.subscription.is_active %}
+                <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}" class="flex-1">
+                    <input type="hidden" name="action" value="freeze">
+                    <button class="w-full bg-blue-100 text-blue-700 py-2 rounded hover:bg-blue-200">❄️ Заморозить</button>
                 </form>
-              </div>
+                {% endif %}
 
-              <div class="space-y-4">
-                <h4 class="font-semibold text-gray-800">Другие действия</h4>
-                <div class="p-4 border rounded-lg space-y-3">
-                  {% if user.subscription and user.subscription.is_active and user.subscription.end_date %}
-                  <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}">
-                      <input type="hidden" name="action" value="freeze">
-                      <button type="submit" class="w-full px-4 py-2 text-sm rounded-lg text-white bg-sky-500 hover:bg-sky-600">
-                        ❄️ Заморозить подписку
-                      </button>
-                  </form>
-                  {% endif %}
+                {% if user.subscription and user.subscription.status == 'frozen' %}
+                <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}" class="flex-1">
+                    <input type="hidden" name="action" value="unfreeze">
+                    <button class="w-full bg-green-100 text-green-700 py-2 rounded hover:bg-green-200">▶️ Разморозить</button>
+                </form>
+                {% endif %}
 
-                  {% if user.subscription and user.subscription.status == 'frozen' %}
-                  <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}">
-                      <input type="hidden" name="action" value="unfreeze">
-                      <button type="submit" class="w-full px-4 py-2 text-sm rounded-lg text-white bg-green-500 hover:bg-green-600">
-                        ▶️ Разморозить подписку
-                      </button>
-                  </form>
-                  {% endif %}
-
-                  {% if user.subscription %}
-                  <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}"
-                        onsubmit="return confirm('Вы уверены, что хотите удалить подписку этого пользователя?');">
-                      <input type="hidden" name="action" value="remove">
-                      <button type="submit" class="w-full px-4 py-2 text-sm rounded-lg text-white bg-red-600 hover:bg-red-700">
-                        🗑️ Удалить подписку
-                      </button>
-                  </form>
-                  {% else %}
-                  <p class="text-sm text-gray-500 text-center py-4">Нет действий, так как подписка отсутствует.</p>
-                  {% endif %}
-                </div>
-              </div>
+                {% if user.subscription %}
+                <form method="post" action="{{ url_for('manage_subscription', user_id=user.id) }}" class="flex-1" onsubmit="return confirm('Удалить?');">
+                    <input type="hidden" name="action" value="remove">
+                    <button class="w-full bg-red-100 text-red-700 py-2 rounded hover:bg-red-200">🗑️ Удалить</button>
+                </form>
+                {% endif %}
             </div>
-
-            <div class="mt-6 flex justify-end">
-              <button class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm" @click="isModalOpen=false">Закрыть</button>
-            </div>
-          </div>
         </div>
-        </div>
-
-      <!-- Удаление -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <form action="{{ url_for('admin_delete_user', user_id=user.id) }}" method="POST"
-              onsubmit="return confirm('Удалить пользователя {{ user.name }}? Это действие необратимо.');">
-          <button class="w-full px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700">
-            Удалить пользователя
+        <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <button type="button" @click="isSubModalOpen = false" class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 sm:ml-3 sm:w-auto sm:text-sm">
+            Закрыть
           </button>
-        </form>
-      </div>
-    </div>
-
-    <!-- Контент -->
-    <div class="lg:col-span-2 space-y-6">
-      <!-- Статус за сегодня -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-xl font-semibold mb-4">Статус за сегодня ({{ today.strftime('%d.%m.%Y') }})</h2>
-        <div class="grid sm:grid-cols-2 gap-4">
-          <div class="p-4 rounded-lg {{ 'bg-green-100 text-green-800' if has_meal_today else 'bg-red-100 text-red-800' }}">
-            <div class="font-medium">Питание</div>
-            <div class="text-lg font-bold">{{ '✔ Заполнено' if has_meal_today else '✘ Нет данных' }}</div>
-          </div>
-          <div class="p-4 rounded-lg {{ 'bg-green-100 text-green-800' if has_activity_today else 'bg-red-100 text-red-800' }}">
-            <div class="font-medium">Активность</div>
-            <div class="text-lg font-bold">{{ '✔ Заполнено' if has_activity_today else '✘ Нет данных' }}</div>
-          </div>
         </div>
-      </div>
-
-      <!-- История замеров тела -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-          <h2 class="text-xl font-semibold">История замеров тела</h2>
-          <div class="flex items-center gap-2">
-            <input x-model="bodyQ" type="text" placeholder="Фильтр по дате/значениям…" class="border rounded-lg px-3 py-2 text-sm">
-          </div>
-        </div>
-        {% if body_analyses %}
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-4 py-3 text-left">Дата</th>
-                  <th class="px-4 py-3 text-left">Вес</th>
-                  <th class="px-4 py-3 text-left">Мышцы</th>
-                  <th class="px-4 py-3 text-left">Жир</th>
-                  <th class="px-4 py-3 text-left">ИМТ</th>
-                  <th class="px-4 py-3 text-left">Метаболизм</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                {% for analysis in body_analyses %}
-                <template x-if="filterBody(`{{ analysis.timestamp.strftime('%d.%m.%Y %H:%M') }}`,
-                                           `{{ (analysis.weight or '') }}`,
-                                           `{{ (analysis.muscle_mass or '') }}`,
-                                           `{{ (analysis.fat_mass or '') }}`,
-                                           `{{ (analysis.bmi or '') }}`,
-                                           `{{ (analysis.metabolism or '') }}`)">
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 whitespace-nowrap">{{ analysis.timestamp.strftime('%d.%m.%Y %H:%M') }}</td>
-                    <td class="px-4 py-3">{{ analysis.weight or '—' }}</td>
-                    <td class="px-4 py-3">{{ analysis.muscle_mass or '—' }}</td>
-                    <td class="px-4 py-3">{{ analysis.fat_mass or '—' }}</td>
-                    <td class="px-4 py-3">{{ analysis.bmi or '—' }}</td>
-                    <td class="px-4 py-3">{{ analysis.metabolism or '—' }}</td>
-                  </tr>
-                </template>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="text-sm text-gray-500">Нет данных замеров тела.</p>
-        {% endif %}
-      </div>
-
-      <!-- История диет -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-          <h2 class="text-xl font-semibold">История диет</h2>
-          <div class="flex items-center gap-2">
-            <input x-model="dietQ" type="text" placeholder="Фильтр по дате/ккал…" class="border rounded-lg px-3 py-2 text-sm">
-          </div>
-        </div>
-        {% if diets %}
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-4 py-3 text-left">Дата</th>
-                  <th class="px-4 py-3 text-left">Калории</th>
-                  <th class="px-4 py-3 text-left">Белки</th>
-                  <th class="px-4 py-3 text-left">Жиры</th>
-                  <th class="px-4 py-3 text-left">Углеводы</th>
-                  <th class="px-4 py-3 text-left">Детали</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                {% for diet_entry in diets %}
-                <template x-if="filterDiet(`{{ diet_entry.date.strftime('%d.%m.%Y') }}`, `{{ diet_entry.total_kcal or '' }}`)">
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 whitespace-nowrap">{{ diet_entry.date.strftime('%d.%m.%Y') }}</td>
-                    <td class="px-4 py-3">{{ diet_entry.total_kcal or '—' }}</td>
-                    <td class="px-4 py-3">{{ diet_entry.protein or '—' }}</td>
-                    <td class="px-4 py-3">{{ diet_entry.fat or '—' }}</td>
-                    <td class="px-4 py-3">{{ diet_entry.carbs or '—' }}</td>
-                    <td class="px-4 py-3">
-                      <a href="{{ url_for('view_diet', diet_id=diet_entry.id) }}" target="_blank" class="text-blue-600 hover:text-blue-800">Посмотреть</a>
-                    </td>
-                  </tr>
-                </template>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="text-sm text-gray-500">Нет данных о диетах.</p>
-        {% endif %}
-      </div>
-
-      <!-- Графики активности -->
-      <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-xl font-semibold mb-4">Активность за последние 30 дней</h2>
-
-        <div class="mb-6">
-          <h3 class="text-lg font-medium mb-2">Шаги</h3>
-          <template x-if="labels.length && steps.length">
-            <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
-          </template>
-          <p x-show="!labels.length || !steps.length" class="text-sm text-gray-500">Нет данных для графика.</p>
-        </div>
-
-        <div>
-          <h3 class="text-lg font-medium mb-2">Активные калории</h3>
-          <template x-if="labels.length && kcal.length">
-            <div class="chart-wrap"><canvas id="kcalChart"></canvas></div>
-          </template>
-          <p x-show="!labels.length || !kcal.length" class="text-sm text-gray-500">Нет данных для графика.</p>
-        </div>
-      </div>
-
-      <!-- История приёмов пищи -->
-      <div class="bg-white shadow rounded-lg п-6 p-6">
-        <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-          <h2 class="text-xl font-semibold">История приёмов пищи</h2>
-          <div class="flex items-center gap-2">
-            <input x-model="mealQ" type="text" placeholder="Поиск по названию/анализу…" class="border rounded-lg px-3 py-2 text-sm">
-            <select x-model="mealType" class="border rounded-lg px-3 py-2 text-sm">
-              <option value="">Все типы</option>
-              <option value="breakfast">Завтрак</option>
-              <option value="lunch">Обед</option>
-              <option value="dinner">Ужин</option>
-              <option value="snack">Перекус</option>
-            </select>
-          </div>
-        </div>
-        {% if meal_logs %}
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-4 py-3 text-left">Дата</th>
-                  <th class="px-4 py-3 text-left">Тип</th>
-                  <th class="px-4 py-3 text-left">Калории</th>
-                  <th class="px-4 py-3 text-left">Б/Ж/У</th>
-                  <th class="px-4 py-3 text-left">Анализ</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                {% for meal_log in meal_logs %}
-                <template x-if="filterMeal(`{{ meal_log.date.strftime('%Y-%m-%d') }}`,
-                                           '{{ meal_log.meal_type }}',
-                                           `{{ (meal_log.name or '')|e }}`,
-                                           `{{ (meal_log.analysis or '')|e }}`)">
-                  <tr class="hover:bg-gray-50 align-top">
-                    <td class="px-4 py-3 whitespace-nowrap">{{ meal_log.date.strftime('%d.%m.%Y') }}</td>
-                    <td class="px-4 py-3 capitalize">{{ meal_log.meal_type }}</td>
-                    <td class="px-4 py-3">{{ meal_log.calories }}</td>
-                    <td class="px-4 py-3">{{ meal_log.protein }}/{{ meal_log.fat }}/{{ meal_log.carbs }}</td>
-                    <td class="px-4 py-3 max-w-md">
-                      <details>
-                        <summary class="cursor-pointer text-blue-600 hover:text-blue-800">Показать</summary>
-                        <pre class="whitespace-pre-wrap">{{ meal_log.analysis }}</pre>
-                      </details>
-                    </td>
-                  </tr>
-                </template>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="text-sm text-gray-500">Нет данных о приёмах пищи.</p>
-        {% endif %}
       </div>
     </div>
   </div>
+
+  <div x-show="unlinkOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/50" @click="unlinkOpen = false"></div>
+      <div class="bg-white rounded-lg p-6 relative z-10 max-w-sm w-full">
+          <h3 class="font-bold text-lg mb-2">Отвязать Telegram?</h3>
+          <p class="text-gray-600 mb-4 text-sm">Бот перестанет присылать уведомления этому пользователю.</p>
+          <div class="flex justify-end gap-2">
+              <button @click="unlinkOpen = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Отмена</button>
+              <form method="post" action="{{ url_for('admin_user_unlink_telegram', user_id=user.id) }}">
+                  <button class="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded">Да, отвязать</button>
+              </form>
+          </div>
+      </div>
+  </div>
+
 </div>
 
+<style>
+    [x-cloak] { display: none !important; }
+</style>
 {% endblock %}
