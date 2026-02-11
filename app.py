@@ -3682,6 +3682,28 @@ def confirm_analysis():
                 new_analysis.bmi = get_val('bmi')
                 new_analysis.fat_free_body_weight = get_val('fat_free_body_weight')
 
+                # --- НОВОЕ: Сохраняем вес также в WeightLog (параллельно) ---
+                if new_analysis.weight and new_analysis.weight > 0:
+                    try:
+                        # Используем сегодняшнюю дату
+                        w_today = date.today()
+
+                        # Проверяем, есть ли уже запись за сегодня
+                        existing_log = WeightLog.query.filter_by(user_id=user.id, date=w_today).first()
+
+                        if existing_log:
+                            existing_log.weight = new_analysis.weight
+                        else:
+                            new_log = WeightLog(
+                                user_id=user.id,
+                                weight=new_analysis.weight,
+                                date=w_today
+                            )
+                            db.session.add(new_log)
+                    except Exception as e:
+                        print(f"Error saving WeightLog in confirm_analysis: {e}")
+                # ------------------------------------------------------------
+
                 # Обновляем цели, если прислали
                 if 'fat_mass_goal' in api_data: user.fat_mass_goal = get_val('fat_mass_goal')
                 if 'muscle_mass_goal' in api_data: user.muscle_mass_goal = get_val('muscle_mass_goal')
