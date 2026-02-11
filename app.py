@@ -5214,13 +5214,26 @@ def admin_delete_user(user_id):
         return redirect(url_for("admin_dashboard"))
 
     try:
-        # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ СВЯЗЬ С АВАТАРОМ ===
-        # Это решает ошибку: violates foreign key constraint "user_avatar_file_id_fkey"
-        # Мы убираем ссылку на файл у юзера, чтобы БД разрешила удалить сам файл.
-        if hasattr(user, 'avatar_file_id'):
+        # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ СВЯЗЬ С ФАЙЛАМИ ===
+        # Это критически важно! Убираем ссылки на аватар и фото тела,
+        # иначе БД не даст удалить сами файлы из таблицы uploaded_files (шаг 4),
+        # так как таблица user всё еще на них ссылается.
+
+        changed = False
+
+        # 1. Сбрасываем аватар
+        if user.avatar_file_id is not None:
             user.avatar_file_id = None
+            changed = True
+
+        # 2. Сбрасываем фото в полный рост
+        if hasattr(user, 'full_body_photo_id') and user.full_body_photo_id is not None:
+            user.full_body_photo_id = None
+            changed = True
+
+        if changed:
             db.session.add(user)
-            db.session.flush()  # Применяем изменение немедленно
+            db.session.flush()  # Применяем изменения немедленно, чтобы освободить файлы
 
         # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
         if getattr(user, "own_group", None):
@@ -5260,7 +5273,7 @@ def admin_delete_user(user_id):
         # === 4. SETTINGS / FILES ===
         UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # Теперь удаление файлов безопасно, так как user.avatar_file_id уже None
+        # Теперь удаление файлов безопасно, так как ссылки (avatar_file_id, full_body_photo_id) сброшены в шаге 0
         UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 5. SOCIAL / LOGS ===
@@ -5319,7 +5332,6 @@ def admin_delete_user(user_id):
         flash(f"Критическая ошибка удаления: {e}", "error")
 
     return redirect(url_for("admin_dashboard"))
-
 @app.route('/groups')
 @login_required
 def groups_list():
