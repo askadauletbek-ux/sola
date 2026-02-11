@@ -22,10 +22,14 @@
   ];
   window.__details = {{ details|tojson }};
   window.__urls = {
+    // detail оставляем как есть, так как там ID в конце URL, и replace работает (или просто работает конкатенация)
     detail: "{{ url_for('admin_user_detail', user_id=0) }}".replace(/0$/, ""),
     admin_applications_list: "{{ url_for('admin_applications_list') }}",
-    delete: "{{ url_for('admin_delete_user', user_id=0) }}".replace(/0$/, ""),
-    magic: "{{ url_for('admin_send_magic_link', user_id=0) }}".replace(/0$/, ""),
+
+    // ИСПРАВЛЕНИЕ: Используем уникальное число 999999 как метку для замены
+    delete: "{{ url_for('admin_delete_user', user_id=999999) }}",
+    magic: "{{ url_for('admin_send_magic_link', user_id=999999) }}",
+
     create: "{{ url_for('admin_create_user') }}",
     groups: "{{ url_for('admin_groups_list') }}",
     squads_dist: "{{ url_for('admin_squads_distribution') }}",
@@ -572,7 +576,8 @@ function adminPage(){
       if(!confirm(`Удалить пользователя ${name}? Это действие необратимо.`)) return;
       const f = document.createElement('form');
       f.method = 'POST';
-      f.action = this.urls.delete + id;
+      // ИСПРАВЛЕНИЕ: Заменяем 999999 на реальный ID
+      f.action = this.urls.delete.replace('999999', id);
       document.body.appendChild(f);
       f.submit();
     },
@@ -580,7 +585,8 @@ function adminPage(){
       if(!confirm('Отправить магическую ссылку для входа?')) return;
       const f = document.createElement('form');
       f.method = 'POST';
-      f.action = this.urls.magic + id;
+      // ИСПРАВЛЕНИЕ: Заменяем 999999 на реальный ID
+      f.action = this.urls.magic.replace('999999', id);
       document.body.appendChild(f);
       f.submit();
     },
