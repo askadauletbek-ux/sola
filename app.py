@@ -5214,6 +5214,14 @@ def admin_delete_user(user_id):
         return redirect(url_for("admin_dashboard"))
 
     try:
+        # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ СВЯЗЬ С АВАТАРОМ ===
+        # Это решает ошибку: violates foreign key constraint "user_avatar_file_id_fkey"
+        # Мы убираем ссылку на файл у юзера, чтобы БД разрешила удалить сам файл.
+        if hasattr(user, 'avatar_file_id'):
+            user.avatar_file_id = None
+            db.session.add(user)
+            db.session.flush()  # Применяем изменение немедленно
+
         # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
         if getattr(user, "own_group", None):
             gid = user.own_group.id
@@ -5229,7 +5237,6 @@ def admin_delete_user(user_id):
             SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
 
             # Обнуляем FK в Training, если есть тренировки этой группы, или удаляем их
-            # Лучше удалить тренировки группы, чтобы не было висячих
             Training.query.filter_by(group_id=gid).delete(synchronize_session=False)
 
             db.session.delete(user.own_group)
@@ -5240,7 +5247,7 @@ def admin_delete_user(user_id):
         Order.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 3. BODY / DIET / ACTIVITY / MEALS ===
-        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)  # Не было в SQL, но нужно
+        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         MealLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         Activity.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         Diet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
@@ -5252,7 +5259,8 @@ def admin_delete_user(user_id):
 
         # === 4. SETTINGS / FILES ===
         UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        # UploadedFiles удаляем записи из БД. Файлы с диска останутся (можно дописать cleanup, если нужно)
+
+        # Теперь удаление файлов безопасно, так как user.avatar_file_id уже None
         UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 5. SOCIAL / LOGS ===
@@ -5280,39 +5288,33 @@ def admin_delete_user(user_id):
         TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # Как тренер (удаляем тренировки, которые он вел)
-        # Сначала удаляем записи участников на эти тренировки
         trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
         if trainer_tids:
             TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)).delete(synchronize_session=False)
             Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
 
         # === 7. SUPPORT (Тикеты и сообщения) ===
-        # Удаляем сообщения внутри тикетов пользователя
         user_ticket_ids = [t.id for t in SupportTicket.query.filter_by(user_id=user.id).all()]
         if user_ticket_ids:
             SupportMessage.query.filter(SupportMessage.ticket_id.in_(user_ticket_ids)).delete(synchronize_session=False)
-
         SupportTicket.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # === 8. SHOPPING CART (КОРЗИНА - Часто забывается) ===
+        # === 8. SHOPPING CART ===
         cart_ids = [c.id for c in ShoppingCart.query.filter_by(user_id=user.id).all()]
         if cart_ids:
             ShoppingCartItem.query.filter(ShoppingCartItem.cart_id.in_(cart_ids)).delete(synchronize_session=False)
         ShoppingCart.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # === 9. 🔥 AUDIT LOGS (ПОЛЕ ACTOR_ID) ===
-        # Это то, что ломало удаление в SQL
+        # === 9. 🔥 AUDIT LOGS ===
         AuditLog.query.filter_by(actor_id=user.id).delete(synchronize_session=False)
 
         # === 10. ФИНАЛ: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ===
         db.session.delete(user)
-
         db.session.commit()
         flash(f"Пользователь ID {user_id} и ВСЕ его данные успешно удалены.", "success")
 
     except Exception as e:
         db.session.rollback()
-        # Печатаем ошибку в консоль сервера для отладки
         print(f"❌ DELETE ERROR: {str(e)}")
         flash(f"Критическая ошибка удаления: {e}", "error")
 

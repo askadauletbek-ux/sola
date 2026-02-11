@@ -1,66 +1,118 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-6">
-    <h1 class="text-3xl font-bold mb-6">Управление группами</h1>
+<div class="max-w-7xl mx-auto px-4 py-8">
 
-    <div class="flex items-center space-x-4 mb-6">
-        <a href="{{ url_for('admin_dashboard') }}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-            ← Назад к админ-панели
-        </a>
-        {#
-        You might consider an "Add Group" button here, but the current design
-        only allows trainers to create groups (via /groups/new).
-        If admins should create groups independent of trainers,
-        you'd add a route and form here.
-        <a href="{{ url_for('create_group') }}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-            ➕ Создать группу
-        </a>
-        #}
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+        <h1 class="text-3xl font-bold text-gray-900">Управление группами</h1>
+        <div class="flex space-x-3">
+            <a href="{{ url_for('admin_dashboard') }}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                ← Админ-панель
+            </a>
+            <a href="{{ url_for('admin_squads_control') }}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                Создание сквадов →
+            </a>
+        </div>
     </div>
 
-    {% if groups %}
-        <div class="overflow-x-auto bg-white shadow-md rounded-lg">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        <th class="px-6 py-3">ID</th>
-                        <th class="px-6 py-3">Название группы</th>
-                        <th class="px-6 py-3">Тренер</th>
-                        <th class="px-6 py-3">Кол-во участников</th>
-                        <th class="px-6 py-3 text-center">Действия</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-200">
-                    {% for group in groups %}
-                    <tr class="hover:bg-gray-100 transition-colors duration-200">
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ group.id }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ group.name }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {% if group.trainer %}
-                                <a href="{{ url_for('admin_user_detail', user_id=group.trainer.id) }}" class="text-blue-600 hover:text-blue-900">{{ group.trainer.name }}</a>
-                            {% else %}
-                                <span class="text-red-500">Нет тренера</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ group.members|length }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-center">
-                            <a href="{{ url_for('admin_edit_group', group_id=group.id) }}" class="text-indigo-600 hover:text-indigo-900 mx-1">
-                                Редактировать
-                            </a>
-                            <form action="{{ url_for('admin_delete_group', group_id=group.id) }}" method="POST" class="inline-block" onsubmit="return confirm('Вы уверены, что хотите удалить группу «{{ group.name }}»? Это удалит всех её участников, сообщения и задачи.');">
-                                <button type="submit" class="text-red-600 hover:text-red-900 mx-1">
-                                    Удалить
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    {% else %}
-        <p class="text-gray-500 mt-4">Нет доступных групп.</p>
-    {% endif %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="mb-6 space-y-2">
+                {% for category, message in messages %}
+                    {% set color_class = 'red' if category == 'error' else 'green' %}
+                    <div class="bg-{{ color_class }}-100 border-l-4 border-{{ color_class }}-500 text-{{ color_class }}-700 p-4 rounded shadow-sm" role="alert">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <div class="bg-white shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
+        {% if groups %}
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Название / Описание</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Тренер</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Участники</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Создана</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for group in groups %}
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                #{{ group.id }}
+                            </td>
+                            <td class="px-6 py-4">
+                                <div class="text-sm font-medium text-gray-900">{{ group.name }}</div>
+                                {% if group.description %}
+                                    <div class="text-sm text-gray-500 truncate max-w-xs" title="{{ group.description }}">
+                                        {{ group.description }}
+                                    </div>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {% if group.trainer %}
+                                    <div class="flex items-center">
+                                        <div class="flex-shrink-0 h-8 w-8">
+                                            {% if group.trainer.avatar %}
+                                                <img class="h-8 w-8 rounded-full object-cover" src="{{ url_for('serve_file', filename=group.trainer.avatar.filename) }}" alt="">
+                                            {% else %}
+                                                <div class="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-xs">
+                                                    {{ group.trainer.name[:1] }}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="ml-3">
+                                            <a href="{{ url_for('admin_user_detail', user_id=group.trainer.id) }}" class="text-sm font-medium text-indigo-600 hover:text-indigo-900">
+                                                {{ group.trainer.name }}
+                                            </a>
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                        Нет тренера
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    {{ group.members|length }} чел.
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ group.created_at.strftime('%d.%m.%Y') }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <a href="{{ url_for('admin_edit_group', group_id=group.id) }}" class="text-indigo-600 hover:text-indigo-900 mr-4">
+                                    Изменить
+                                </a>
+                                <form action="{{ url_for('admin_delete_group', group_id=group.id) }}" method="POST" class="inline-block" onsubmit="return confirm('Вы уверены? Удаление группы приведет к потере истории переписки и статистики баллов.');">
+                                    <button type="submit" class="text-red-600 hover:text-red-900 bg-transparent border-none cursor-pointer">
+                                        Удалить
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-12">
+                <p class="text-gray-500 text-lg">Группы пока не созданы.</p>
+                <div class="mt-4">
+                    <a href="{{ url_for('admin_squads_control') }}" class="text-indigo-600 hover:text-indigo-900 font-medium">
+                        Перейти к созданию сквада &rarr;
+                    </a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
 </div>
 {% endblock %}
