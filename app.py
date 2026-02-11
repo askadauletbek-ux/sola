@@ -5214,102 +5214,107 @@ def admin_delete_user(user_id):
         return redirect(url_for("admin_dashboard"))
 
     try:
-        # === 0) Если у пользователя есть собственная группа — чистим всё, что к ней привязано
+        # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
         if getattr(user, "own_group", None):
             gid = user.own_group.id
-
-            # Реакции к сообщениям группы
+            # Удаляем всё, что связано с его группой
             msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(group_id=gid).all()]
             if msg_ids:
-                MessageReaction.query.filter(MessageReaction.message_id.in_(msg_ids)) \
-                    .delete(synchronize_session=False)
-
-            # Удаляем жалобы на сообщения группы
-            MessageReport.query.filter(MessageReport.message_id.in_(msg_ids)).delete(synchronize_session=False)
+                MessageReaction.query.filter(MessageReaction.message_id.in_(msg_ids)).delete(synchronize_session=False)
+                MessageReport.query.filter(MessageReport.message_id.in_(msg_ids)).delete(synchronize_session=False)
 
             GroupMessage.query.filter_by(group_id=gid).delete(synchronize_session=False)
             GroupTask.query.filter_by(group_id=gid).delete(synchronize_session=False)
             GroupMember.query.filter_by(group_id=gid).delete(synchronize_session=False)
             SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
+
+            # Обнуляем FK в Training, если есть тренировки этой группы, или удаляем их
+            # Лучше удалить тренировки группы, чтобы не было висячих
+            Training.query.filter_by(group_id=gid).delete(synchronize_session=False)
+
             db.session.delete(user.own_group)
 
-        # === 1) Членства пользователя в чужих группах
-        GroupMember.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # === 2) Сообщения пользователя и реакции на них
-        user_msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(user_id=user.id).all()]
-        if user_msg_ids:
-            MessageReaction.query.filter(MessageReaction.message_id.in_(user_msg_ids)) \
-                .delete(synchronize_session=False)
-            MessageReport.query.filter(MessageReport.message_id.in_(user_msg_ids)) \
-                .delete(synchronize_session=False)
-
-        GroupMessage.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # === 3) Реакции и жалобы, созданные пользователем
-        MessageReaction.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        MessageReport.query.filter_by(reporter_id=user.id).delete(synchronize_session=False)
-
-        # === 4) Тренировки, где он тренер, и записи на них
-        trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
-        if trainer_tids:
-            TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)) \
-                .delete(synchronize_session=False)
-            Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
-
-        # === 5) Записи пользователя на тренировки
-        TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # === 6) Основные данные (Логи / активность / анализы / диеты)
-        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        MealLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Activity.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Diet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        SquadScoreLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # Диетические настройки
-        DietPreference.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # === 7) Подписки / заказы / настройки / уведомления
+        # === 2. SUBSCRIPTIONS / ORDERS ===
+        SubscriptionApplication.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         Subscription.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         Order.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # === 3. BODY / DIET / ACTIVITY / MEALS ===
+        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)  # Не было в SQL, но нужно
+        MealLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Activity.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Diet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        DietPreference.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # === 4. SETTINGS / FILES ===
         UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        # UploadedFiles удаляем записи из БД. Файлы с диска останутся (можно дописать cleanup, если нужно)
+        UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # === 5. SOCIAL / LOGS ===
         Notification.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        SubscriptionApplication.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        AnalyticsEvent.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        UserAchievement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # === 8) Новые модули (Магазин, Поддержка, AI, Ачивки, Аналитика)
+        # Сначала реакции пользователя на чужие сообщения
+        MessageReaction.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # Корзина покупок (сначала товары, потом корзины)
-        cart_ids = [row[0] for row in db.session.query(ShoppingCart.id).filter_by(user_id=user.id).all()]
+        # Сообщения пользователя (и реакции на них)
+        user_msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(user_id=user.id).all()]
+        if user_msg_ids:
+            # Реакции ДРУГИХ людей на сообщения ЭТОГО юзера
+            MessageReaction.query.filter(MessageReaction.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
+            MessageReport.query.filter(MessageReport.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
+
+        GroupMessage.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        GroupMember.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        SquadScoreLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        MessageReport.query.filter_by(reporter_id=user.id).delete(synchronize_session=False)
+
+        # === 6. ТРЕНИРОВКИ (Как тренер и как участник) ===
+        # Как участник
+        TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # Как тренер (удаляем тренировки, которые он вел)
+        # Сначала удаляем записи участников на эти тренировки
+        trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
+        if trainer_tids:
+            TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)).delete(synchronize_session=False)
+            Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
+
+        # === 7. SUPPORT (Тикеты и сообщения) ===
+        # Удаляем сообщения внутри тикетов пользователя
+        user_ticket_ids = [t.id for t in SupportTicket.query.filter_by(user_id=user.id).all()]
+        if user_ticket_ids:
+            SupportMessage.query.filter(SupportMessage.ticket_id.in_(user_ticket_ids)).delete(synchronize_session=False)
+
+        SupportTicket.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # === 8. SHOPPING CART (КОРЗИНА - Часто забывается) ===
+        cart_ids = [c.id for c in ShoppingCart.query.filter_by(user_id=user.id).all()]
         if cart_ids:
             ShoppingCartItem.query.filter(ShoppingCartItem.cart_id.in_(cart_ids)).delete(synchronize_session=False)
         ShoppingCart.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # Тикеты поддержки (сначала сообщения, потом тикеты)
-        ticket_ids = [row[0] for row in db.session.query(SupportTicket.id).filter_by(user_id=user.id).all()]
-        if ticket_ids:
-            SupportMessage.query.filter(SupportMessage.ticket_id.in_(ticket_ids)).delete(synchronize_session=False)
-        SupportTicket.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        # === 9. 🔥 AUDIT LOGS (ПОЛЕ ACTOR_ID) ===
+        # Это то, что ломало удаление в SQL
+        AuditLog.query.filter_by(actor_id=user.id).delete(synchronize_session=False)
 
-        # Остальное
-        BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        UserAchievement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        AnalyticsEvent.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # === 9) Наконец, сам пользователь
+        # === 10. ФИНАЛ: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ===
         db.session.delete(user)
+
         db.session.commit()
-        flash(f"Пользователь '{user.name}' и все связанные данные удалены.", "success")
+        flash(f"Пользователь ID {user_id} и ВСЕ его данные успешно удалены.", "success")
 
     except Exception as e:
         db.session.rollback()
-        # Вывод ошибки в консоль сервера, чтобы видеть причину
-        print(f"❌ ОШИБКА УДАЛЕНИЯ: {e}")
-        flash(f"Ошибка при удалении пользователя: {e}", "error")
+        # Печатаем ошибку в консоль сервера для отладки
+        print(f"❌ DELETE ERROR: {str(e)}")
+        flash(f"Критическая ошибка удаления: {e}", "error")
 
     return redirect(url_for("admin_dashboard"))
 
