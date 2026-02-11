@@ -102,8 +102,12 @@ from models import (
     User, Subscription, Order, Group, GroupMember, GroupMessage, MessageReaction,
     GroupTask, MealLog, Activity, Diet, Training, TrainingSignup, BodyAnalysis,
     UserSettings, MealReminderLog, AuditLog, PromptTemplate, UploadedFile,
-    UserAchievement, MessageReport, AnalyticsEvent, RecipeCategory, Recipe, WeightLog)
-# <-- Добавьте это ниже импортов models
+    UserAchievement, MessageReport, AnalyticsEvent, RecipeCategory, Recipe, WeightLog,
+    # --- ДОБАВИТЬ ЭТИ МОДЕЛИ: ---
+    Notification, BodyVisualization, SubscriptionApplication, EmailVerification,
+    SquadScoreLog, SupportTicket, SupportMessage, DietPreference, StagedDiet,
+    ShoppingCart, ShoppingCartItem
+)
 from achievements_engine import check_all_achievements, ACHIEVEMENTS_METADATA
 
 
