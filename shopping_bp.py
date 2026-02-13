@@ -50,7 +50,7 @@ def _create_schema():
     ddl_lists = f"""
     CREATE TABLE IF NOT EXISTS shopping_lists (
         id          {'BIGSERIAL' if pg else 'INTEGER'} PRIMARY KEY,
-        user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id     BIGINT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
         diet_id     BIGINT NOT NULL REFERENCES diets(id) ON DELETE CASCADE,
         status      VARCHAR(20) NOT NULL DEFAULT 'ready',
         created_at  {'TIMESTAMPTZ NOT NULL' if pg else 'TIMESTAMP NOT NULL'} DEFAULT {'NOW()' if pg else '(CURRENT_TIMESTAMP)'}
