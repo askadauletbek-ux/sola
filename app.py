@@ -39,6 +39,7 @@ from flask_login import current_user
 from werkzeug.utils import secure_filename
 from amplitude import Amplitude, BaseEvent  # <-- Amplitude
 import jwt  # <-- Добавлен импорт для Apple Sign-In
+from jwt import PyJWKClient # <-- НОВОЕ: Добавляем клиент для загрузки ключей Apple
 
 # --- Импорты для Google Sign-In ---
 from google.oauth2 import id_token
@@ -2003,15 +2004,24 @@ def api_apple_login():
 
         try:
 
-            # Декодируем токен Apple.
+            # Загружаем публичные ключи Apple и находим нужный для нашего токена
+            apple_jwks_url = "https://appleid.apple.com/auth/keys"
+            jwks_client = PyJWKClient(apple_jwks_url)
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
 
-            # Внимание: Для полной безопасности здесь нужно валидировать подпись через Apple Public Keys.
+            # Проверяем подпись. Если в .env есть APPLE_CLIENT_ID (Bundle ID), проверим и его
+            aud = os.getenv("APPLE_CLIENT_ID")
+            options = {"verify_signature": True}
+            if not aud:
+                options["verify_aud"] = False
 
-            # Для базовой реализации мы доверяем токену, декодируя payload (verify=False),
-
-            # полагая, что HTTPS соединение с приложением защищено.
-
-            decoded = jwt.decode(token, options={"verify_signature": False})
+            decoded = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=aud,
+                options=options
+            )
 
             email = decoded.get('email')
 
@@ -2180,8 +2190,25 @@ def api_register_apple():
     token = request.form.get('id_token')
 
     try:
-        # Декодируем токен, чтобы убедиться в email
-        decoded = jwt.decode(token, options={"verify_signature": False})
+        # Загружаем публичные ключи Apple и находим нужный для нашего токена
+        apple_jwks_url = "https://appleid.apple.com/auth/keys"
+        jwks_client = PyJWKClient(apple_jwks_url)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+
+        # Проверяем подпись
+        aud = os.getenv("APPLE_CLIENT_ID")
+        options = {"verify_signature": True}
+        if not aud:
+            options["verify_aud"] = False
+
+        decoded = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=aud,
+            options=options
+        )
+
         email = decoded.get('email')
         if not email:
             return jsonify({"ok": False, "errors": ["INVALID_APPLE_TOKEN_NO_EMAIL"]}), 400
