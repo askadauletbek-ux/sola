@@ -441,25 +441,6 @@ def _send_mobile_push(fcm_token: str, title: str, body: str, data: dict = None):
         # (Эту логику можно добавить позже)
         return False
 
-@app.before_request
-def set_tz():
-    if db.engine.url.get_backend_name() == "postgresql":
-        with db.engine.connect() as con:
-            con.exec_driver_sql("SET TIME ZONE 'Asia/Almaty'")
-
-@app.before_request
-def expire_subscriptions_if_needed():
-    """Перед каждым запросом помечаем подписку текущего пользователя как inactive, если истекла."""
-    try:
-        u = get_current_user()
-        if not u:
-            return
-        sub = getattr(u, "subscription", None)
-        if sub and sub.status == 'active' and sub.end_date and sub.end_date < date.today():
-            sub.status = 'inactive'
-            db.session.commit()
-    except Exception:
-        db.session.rollback()
 
 @app.route('/api/activity/today/<int:chat_id>')
 def activity_today(chat_id):
@@ -638,14 +619,17 @@ def _notification_worker():
                             if sent_mobile:
                                 s.notified_start = True
 
-                users = User.query.all()
-                for u in users:
-                    sub = getattr(u, "subscription", None)
-                    if not sub or sub.status != 'active' or not sub.end_date:
-                        continue
-                    days_left = (sub.end_date - now_d).days
+                                # Получаем только тех пользователей, у которых активна подписка
+                                users = User.query.join(Subscription).filter(
+                                    Subscription.status == 'active',
+                                    Subscription.end_date.isnot(None)
+                                ).all()
 
-                    # --- ИЗМЕНЕНИЕ: Проверяем fcm_token и настройки ---
+                                for u in users:
+                                    sub = u.subscription
+                                    days_left = (sub.end_date - now_d).days
+
+                                    # --- ИЗМЕНЕНИЕ: Проверяем fcm_token и настройки ---
                     fcm_token = getattr(u, "fcm_device_token", None)
                     settings = get_effective_user_settings(u)
 
@@ -1209,46 +1193,6 @@ def utility_processor():
 def inject_user():
     return {'current_user': get_current_user()}
 
-# NEW: глобальные флаги для помощи новичкам и наличия анализа тела
-@app.context_processor
-def inject_help_flags():
-    u = get_current_user()
-
-    # Есть ли уже анализы тела
-    has_body_analysis = False
-    if u:
-        try:
-            has_body_analysis = db.session.query(BodyAnalysis.id).filter_by(user_id=u.id).first() is not None
-        except Exception:
-            has_body_analysis = False
-
-    # Новичок: либо нет анализов, либо профиль «моложе 7 дней».
-    # Безопасно берём первую доступную дату: created_at / created / registered_at / updated_at.
-    is_newbie = False
-    if u:
-        joined = (
-            getattr(u, 'created_at', None)
-            or getattr(u, 'created', None)
-            or getattr(u, 'registered_at', None)
-            or getattr(u, 'updated_at', None)
-        )
-        try:
-            if joined:
-                # поддержка date и datetime
-                if isinstance(joined, date) and not isinstance(joined, datetime):
-                    is_newbie = (date.today() - joined).days < 7
-                else:
-                    is_newbie = (datetime.now(UTC).date() - joined.date()).days < 7
-        except Exception:
-            # в крайнем случае ориентируемся только на отсутствие анализов
-            is_newbie = False
-
-    # если анализов нет — всё равно показываем кнопку помощи
-    if not has_body_analysis:
-        is_newbie = True
-
-    return dict(show_help_button=is_newbie, has_body_analysis=has_body_analysis)
-
 def _month_deltas(user):
     # Первый день месяца в виде datetime, чтобы сравнивать с BodyAnalysis.timestamp
     start_dt = datetime.combine(date.today().replace(day=1), dt_time.min)
@@ -1273,22 +1217,6 @@ def _month_deltas(user):
         except Exception:
             pass
     return {"fat_delta": fat_delta, "muscle_delta": muscle_delta}
-
-@app.context_processor
-def inject_renewal_reminder():
-    u = get_current_user()  # у тебя уже есть helper для текущего пользователя
-    show = False
-    summary = {"fat_delta": 0.0, "muscle_delta": 0.0}
-    days_left = None
-    if u and getattr(u, "subscription", None) and u.subscription.status == 'active' and u.subscription.end_date:
-        days_left = (u.subscription.end_date - date.today()).days
-        if days_left is not None and 0 < days_left <= 5:
-            # показываем 1 раз в день
-            last = u.renewal_reminder_last_shown_on
-            if last != date.today():
-                show = True
-        summary = _month_deltas(u)
-    return dict(renewal_reminder_due=show, monthly_summary=summary, subscription_days_left=days_left)
 
 # Error handlers
 @app.errorhandler(404)
@@ -4760,9 +4688,12 @@ def registered_chats():
 # ---------------- ADMIN PANEL ----------------
 
 @app.route("/admin")
-@admin_required  # Защита маршрута для админа
+@admin_required
 def admin_dashboard():
-    users = User.query.order_by(User.id).all()  # Order by ID for stable display
+    page = request.args.get('page', 1, type=int)
+    # Разбиваем на страницы (по 50 пользователей)
+    users_pagination = User.query.order_by(User.id).paginate(page=page, per_page=50, error_out=False)
+    users = users_pagination.items
     today = date.today()
 
     statuses = {}
@@ -4857,6 +4788,7 @@ def admin_dashboard():
     return render_template(
         "admin_dashboard.html",
         users=users,
+        pagination=users_pagination,  # <-- Новое
         statuses=statuses,
         details=details,
         today=today
