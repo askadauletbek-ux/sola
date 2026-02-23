@@ -7925,6 +7925,65 @@ def privacy_policy():
         today=datetime.now()
     )
 
+
+# --- ПУБЛИЧНАЯ ПОДДЕРЖКА (ДЛЯ APPLE И ГОСТЕЙ) ---
+@app.route('/support', methods=['GET', 'POST'])
+def support_public():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip()
+        message = request.form.get('message', '').strip()
+
+        if not email or not message:
+            flash("Email и сообщение обязательны для заполнения.", "error")
+            return redirect(url_for('support_public'))
+
+        try:
+            # 1. Пытаемся найти пользователя по email
+            user = User.query.filter(func.lower(User.email) == email.lower()).first()
+
+            # 2. Если пользователя нет (гость), используем системный аккаунт
+            if not user:
+                guest_email = "guest_support@kilogr.app"
+                user = User.query.filter_by(email=guest_email).first()
+                if not user:
+                    import secrets
+                    hashed_pw = bcrypt.generate_password_hash(secrets.token_urlsafe(16)).decode('utf-8')
+                    user = User(name="Гость (Поддержка)", email=guest_email, password=hashed_pw)
+                    db.session.add(user)
+                    db.session.flush()
+
+                # Добавляем контакты гостя прямо в текст сообщения
+                message = f"📩 ВОПРОС ОТ ГОСТЯ\nИмя: {name}\nEmail: {email}\n\nТекст:\n{message}"
+
+            # 3. Создаем тикет
+            ticket = SupportTicket(user_id=user.id, status='open')
+            db.session.add(ticket)
+            db.session.flush()
+
+            # 4. Создаем сообщение
+            msg = SupportMessage(ticket_id=ticket.id, sender_type='user', text=message)
+            db.session.add(msg)
+            db.session.commit()
+
+            flash("Ваше сообщение успешно отправлено! Мы ответим вам на указанный email.", "success")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Support Error: {e}")
+            flash("Произошла ошибка при отправке. Пожалуйста, попробуйте позже.", "error")
+
+        return redirect(url_for('support_public'))
+
+    # Для GET запроса предзаполняем поля, если юзер авторизован
+    current_email = ""
+    current_name = ""
+    u = get_current_user()
+    if u:
+        current_email = u.email
+        current_name = u.name
+
+    return render_template('support_public.html', current_email=current_email, current_name=current_name)
+
 @app.route('/api/auth/verify_email', methods=['POST'])
 def api_auth_verify_email():
     data = request.get_json(force=True, silent=True) or {}
