@@ -447,6 +447,20 @@
                         <label class="block text-sm font-medium text-gray-700">Текст</label>
                         <textarea x-model="notifBody" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">URL изображения (опционально)</label>
+                        <input type="text" x-model="notifImageUrl" placeholder="https://example.com/image.png" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Цвет текста</label>
+                            <input type="color" x-model="notifTextColor" class="mt-1 block w-full h-10 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer p-0.5">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Цвет панели</label>
+                            <input type="color" x-model="notifBgColor" class="mt-1 block w-full h-10 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer p-0.5">
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
@@ -481,6 +495,9 @@ function adminPage(){
     notifyModalOpen: false,
     notifTitle: '',
     notifBody: '',
+    notifImageUrl: '',
+    notifTextColor: '#000000',
+    notifBgColor: '#ffffff',
 
     norm(s){ return (s||'').toString().toLowerCase().trim(); },
     isSelected(id){ return this.selected.has(id); },
@@ -610,7 +627,10 @@ function adminPage(){
                 body: JSON.stringify({
                     user_ids: userIds,
                     title: this.notifTitle,
-                    body: this.notifBody
+                    body: this.notifBody,
+                    image_url: this.notifImageUrl,
+                    text_color: this.notifTextColor,
+                    bg_color: this.notifBgColor
                 })
             });
             const data = await res.json();
@@ -619,6 +639,9 @@ function adminPage(){
                 this.notifyModalOpen = false;
                 this.notifTitle = '';
                 this.notifBody = '';
+                this.notifImageUrl = '';
+                this.notifTextColor = '#000000';
+                this.notifBgColor = '#ffffff';
                 this.clearSelection();
             } else {
                 alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
