@@ -6870,7 +6870,6 @@ def admin_prompts_activate(pid):
 
 
 # ===== ADMIN: Рассылки в Telegram =====
-
 @app.route("/admin/users/notify", methods=["POST"])
 @admin_required
 def admin_users_notify():
@@ -6881,6 +6880,16 @@ def admin_users_notify():
 
     if not user_ids or not title or not body:
         return jsonify({"ok": False, "error": "Не заполнены данные"}), 400
+
+    # Извлекаем новые параметры кастомизации
+    image_url = data.get("image_url", "").strip()
+    text_color = data.get("text_color", "").strip()
+    bg_color = data.get("bg_color", "").strip()
+
+    custom_data = {}
+    if image_url: custom_data["image_url"] = image_url
+    if text_color: custom_data["text_color"] = text_color
+    if bg_color: custom_data["bg_color"] = bg_color
 
     success_count = 0
 
@@ -6893,7 +6902,8 @@ def admin_users_notify():
             user_id=u.id,
             title=title,
             body=body,
-            type="info"  # Можно сделать настраиваемым
+            type="info",  # Можно сделать настраиваемым
+            data=custom_data.copy() if custom_data else None
         )
         if sent:
             success_count += 1

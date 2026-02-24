@@ -53,13 +53,18 @@ def send_user_notification(user_id: int, title: str, body: str, type: str = 'inf
 def send_fcm_push(token: str, title: str, body: str, data: dict = None):
     """Отправка только пуша (вспомогательная функция)"""
     try:
+        data_dict = data or {}
         # FCM принимает данные только в формате строк
-        str_data = {k: str(v) for k, v in (data or {}).items()}
+        str_data = {k: str(v) for k, v in data_dict.items()}
+
+        # Извлекаем image_url для поддержки нативного отображения картинки
+        image_url = data_dict.get("image_url")
 
         message = messaging.Message(
             notification=messaging.Notification(
                 title=title,
                 body=body,
+                image=image_url if image_url else None
             ),
             data=str_data,
             token=token,
