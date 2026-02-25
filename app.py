@@ -9108,5 +9108,8 @@ def admin_support_close(ticket_id):
 @admin_required
 def admin_recipes_page():
     return render_template("admin_recipes.html")
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
