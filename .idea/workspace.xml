@@ -11,6 +11,7 @@
       <change afterPath="$PROJECT_DIR$/../PythonProject5/seed_db.py" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/../PythonProject5/static/tracks/d" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/../PythonProject5/tracks.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../PythonProject2/Dauletbek_Askar_tasks_solutions_pr3.py" beforeDir="false" afterPath="$PROJECT_DIR$/../PythonProject2/Dauletbek_Askar_tasks_solutions_pr3.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../PythonProject2/Dauletbek_Askar_tasks_solutions_pr4.py" beforeDir="false" afterPath="$PROJECT_DIR$/../PythonProject2/Dauletbek_Askar_tasks_solutions_pr4.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../PythonProject2/practice3_sample_data_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/../PythonProject2/practice3_sample_data_generator.py" afterDir="false" />
@@ -36,6 +37,7 @@
       <change beforePath="$PROJECT_DIR$/../SalesJourney/webhooks.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SalesJourney/webhooks.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../SmartFood/backend/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/../SmartFood/backend/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/.env" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" beforeDir="false" afterPath="$PROJECT_DIR$/../foodstream/ai_kitchen.py" afterDir="false" />

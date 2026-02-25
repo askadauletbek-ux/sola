@@ -802,74 +802,8 @@ def _ensure_column(table, column, ddl):
         with db.engine.connect() as con:
             con.execute(text(f'ALTER TABLE {table_q} ADD COLUMN {column_q} {ddl}'))
 
-
-def _auto_migrate_diet_schema():
-    insp = inspect(db.engine)
-    # Создадим недостающие таблицы по моделям (включая WeightLog)
-    db.create_all()
-
-    # === Новое поле для фиксации веса ===
-    _ensure_column("user", "start_weight", "FLOAT")
-
-    _ensure_column("user", "height", "INTEGER")  # <--- Добавлено
-
-    # === Новые поля пользователя для визуализаций ===
-    _ensure_column("user", "sex", "TEXT DEFAULT 'male'")
-    _ensure_column("user", "face_consent", "BOOLEAN DEFAULT FALSE")
-
-    _ensure_column("user", "streak_nutrition", "INTEGER DEFAULT 0")
-    _ensure_column("user", "streak_activity", "INTEGER DEFAULT 0")
-    _ensure_column("user", "target_calories", "INTEGER")  # <--- Smart Target
-    _ensure_column("meal_logs", "is_flagged", "BOOLEAN DEFAULT FALSE")
-    _ensure_column("meal_logs", "created_at", "TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP)")
-
-    # (опционально) Заполнить created_at там где NULL
-    try:
-        with db.engine.connect() as con:
-            con.execute(text("UPDATE meal_logs SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
-    except Exception as e:
-        print(f"[auto-migrate] backfill created_at failed: {e}")
-
-
-# ------------------ ONBOARDING API ------------------
-def _auto_migrate_onboarding_schema():
-    insp = inspect(db.engine)
-    # Создадим недостающие таблицы по моделям
-    db.create_all()
-
-    # === Новые поля пользователя для визуализаций ===
-    _ensure_column("user", "sex", "TEXT DEFAULT 'male'")
-    _ensure_column("user", "face_consent", "BOOLEAN DEFAULT FALSE")
-
-    # === НОВОЕ ПОЛЕ ДЛЯ ТУРА ===
-    _ensure_column("user", "onboarding_complete", "BOOLEAN DEFAULT FALSE")
-
-    # === НОВОЕ ПОЛЕ ДЛЯ ОНБОРДИНГА V2 (ПО ТЗ) ===
-    _ensure_column("user", "onboarding_v2_complete", "BOOLEAN DEFAULT FALSE")
-    _ensure_column("user", "scanner_onboarding_seen", "BOOLEAN DEFAULT FALSE")
-
-    # --- НОВАЯ СТРОКА ---
-    _ensure_column("user", "fcm_device_token", "TEXT")  # Добавляем колонку для FCM
-    # ---
-
-    # === Поля для верификации почты ===
-    _ensure_column("user", "verification_code", "TEXT")
-    _ensure_column("user", "verification_code_expires_at", "TIMESTAMP")
-    _ensure_column("user", "is_verified", "BOOLEAN DEFAULT FALSE")
-
-    # === ВАЖНО: meal_logs нужные поля ===
-    _ensure_column("meal_logs", "image_path", "TEXT")
-
 with app.app_context():
-    # Мини-миграции для новых полей в user
-    _auto_migrate_diet_schema()
-    _auto_migrate_onboarding_schema()
 
-    # Запускаем фоновые задачи ТОЛЬКО после инициализации БД
-
-    # (Мы убрали try/except отсюда и перенесли вызов ниже)
-
-    # Запускаем автогенерацию диет один раз (не в мастер-процессе reloader’a)
     import os as _os
 
     if _os.environ.get("WERKZEUG_RUN_MAIN") == "true":
@@ -5174,9 +5108,6 @@ def admin_delete_user(user_id):
 
     try:
         # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ ЦИКЛИЧЕСКИЕ СВЯЗИ ===
-        # Это критически важно! Убираем ссылки на файлы и анализы,
-        # иначе БД не даст удалить записи из-за Foreign Key ограничений.
-
         changed = False
 
         # 1. Сбрасываем аватар
@@ -5189,19 +5120,16 @@ def admin_delete_user(user_id):
             user.full_body_photo_id = None
             changed = True
 
-        # 3. [FIX] Сбрасываем ссылку на первый анализ (устранение циклической зависимости)
-        # Если это поле заполнено, нельзя удалить таблицу body_analysis
+        # 3. Сбрасываем ссылку на первый анализ
         if user.initial_body_analysis_id is not None:
             user.initial_body_analysis_id = None
             changed = True
 
         if changed:
             db.session.add(user)
-            # ВАЖНО: Делаем COMMIT, чтобы база данных зафиксировала разрыв связей
-            # перед тем как мы начнем удалять зависимые объекты.
             db.session.commit()
 
-            # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
+        # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
         if getattr(user, "own_group", None):
             gid = user.own_group.id
             # Удаляем всё, что связано с его группой
@@ -5216,7 +5144,6 @@ def admin_delete_user(user_id):
             SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
 
             # Удаляем тренировки этой группы
-            # Сначала отписки от них
             group_training_ids = [t.id for t in Training.query.filter_by(group_id=gid).all()]
             if group_training_ids:
                 TrainingSignup.query.filter(TrainingSignup.training_id.in_(group_training_ids)).delete(
@@ -5239,30 +5166,24 @@ def admin_delete_user(user_id):
         StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # Теперь удаление пройдет успешно, т.к. user.initial_body_analysis_id уже NULL
+        # Теперь безопасно удалять анализы
         BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 4. SETTINGS / FILES ===
         UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        EmailVerification.query.filter_by(email=user.email).delete(
-            synchronize_session=False)  # Добавлено на всякий случай
-
-        # Теперь удаление файлов безопасно
+        EmailVerification.query.filter_by(email=user.email).delete(synchronize_session=False)
         UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 5. SOCIAL / LOGS ===
         Notification.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         AnalyticsEvent.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         UserAchievement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # Сначала реакции пользователя на чужие сообщения
         MessageReaction.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # Сообщения пользователя (и реакции на них)
+        # Удаление сообщений и реакций на них
         user_msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(user_id=user.id).all()]
         if user_msg_ids:
-            # Реакции ДРУГИХ людей на сообщения ЭТОГО юзера
             MessageReaction.query.filter(MessageReaction.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
             MessageReport.query.filter(MessageReport.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
 
@@ -5271,17 +5192,14 @@ def admin_delete_user(user_id):
         SquadScoreLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         MessageReport.query.filter_by(reporter_id=user.id).delete(synchronize_session=False)
 
-        # === 6. ТРЕНИРОВКИ (Как тренер и как участник) ===
-        # Как участник
+        # === 6. ТРЕНИРОВКИ ===
         TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # Как тренер (удаляем тренировки, которые он вел)
         trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
         if trainer_tids:
             TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)).delete(synchronize_session=False)
             Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
 
-        # === 7. SUPPORT (Тикеты и сообщения) ===
+        # === 7. SUPPORT ===
         user_ticket_ids = [t.id for t in SupportTicket.query.filter_by(user_id=user.id).all()]
         if user_ticket_ids:
             SupportMessage.query.filter(SupportMessage.ticket_id.in_(user_ticket_ids)).delete(synchronize_session=False)
@@ -5293,18 +5211,16 @@ def admin_delete_user(user_id):
             ShoppingCartItem.query.filter(ShoppingCartItem.cart_id.in_(cart_ids)).delete(synchronize_session=False)
         ShoppingCart.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
-        # === 9. 🔥 AUDIT LOGS ===
+        # === 9. AUDIT LOGS ===
         AuditLog.query.filter_by(actor_id=user.id).delete(synchronize_session=False)
 
-        # === 10. ФИНАЛ: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ===
+        # === 10. ФИНАЛ ===
         db.session.delete(user)
         db.session.commit()
         flash(f"Пользователь ID {user_id} и ВСЕ его данные успешно удалены.", "success")
 
     except Exception as e:
         db.session.rollback()
-        print(f"❌ DELETE ERROR: {str(e)}")
-        # Печатаем полный трейсбэк в консоль для отладки
         import traceback
         traceback.print_exc()
         flash(f"Критическая ошибка удаления: {e}", "error")
