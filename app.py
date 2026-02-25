@@ -5173,10 +5173,9 @@ def admin_delete_user(user_id):
         return redirect(url_for("admin_dashboard"))
 
     try:
-        # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ СВЯЗЬ С ФАЙЛАМИ ===
-        # Это критически важно! Убираем ссылки на аватар и фото тела,
-        # иначе БД не даст удалить сами файлы из таблицы uploaded_files (шаг 4),
-        # так как таблица user всё еще на них ссылается.
+        # === 0. ПРЕДВАРИТЕЛЬНО: РАЗРЫВАЕМ ЦИКЛИЧЕСКИЕ СВЯЗИ ===
+        # Это критически важно! Убираем ссылки на файлы и анализы,
+        # иначе БД не даст удалить записи из-за Foreign Key ограничений.
 
         changed = False
 
@@ -5190,11 +5189,19 @@ def admin_delete_user(user_id):
             user.full_body_photo_id = None
             changed = True
 
+        # 3. [FIX] Сбрасываем ссылку на первый анализ (устранение циклической зависимости)
+        # Если это поле заполнено, нельзя удалить таблицу body_analysis
+        if user.initial_body_analysis_id is not None:
+            user.initial_body_analysis_id = None
+            changed = True
+
         if changed:
             db.session.add(user)
-            db.session.flush()  # Применяем изменения немедленно, чтобы освободить файлы
+            # ВАЖНО: Делаем COMMIT, чтобы база данных зафиксировала разрыв связей
+            # перед тем как мы начнем удалять зависимые объекты.
+            db.session.commit()
 
-        # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
+            # === 1. ГРУППЫ (Если он владелец - удаляем группу и связи) ===
         if getattr(user, "own_group", None):
             gid = user.own_group.id
             # Удаляем всё, что связано с его группой
@@ -5208,8 +5215,13 @@ def admin_delete_user(user_id):
             GroupMember.query.filter_by(group_id=gid).delete(synchronize_session=False)
             SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
 
-            # Обнуляем FK в Training, если есть тренировки этой группы, или удаляем их
-            Training.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            # Удаляем тренировки этой группы
+            # Сначала отписки от них
+            group_training_ids = [t.id for t in Training.query.filter_by(group_id=gid).all()]
+            if group_training_ids:
+                TrainingSignup.query.filter(TrainingSignup.training_id.in_(group_training_ids)).delete(
+                    synchronize_session=False)
+                Training.query.filter(Training.id.in_(group_training_ids)).delete(synchronize_session=False)
 
             db.session.delete(user.own_group)
 
@@ -5226,13 +5238,17 @@ def admin_delete_user(user_id):
         DietPreference.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # Теперь удаление пройдет успешно, т.к. user.initial_body_analysis_id уже NULL
         BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 4. SETTINGS / FILES ===
         UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        EmailVerification.query.filter_by(email=user.email).delete(
+            synchronize_session=False)  # Добавлено на всякий случай
 
-        # Теперь удаление файлов безопасно, так как ссылки (avatar_file_id, full_body_photo_id) сброшены в шаге 0
+        # Теперь удаление файлов безопасно
         UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # === 5. SOCIAL / LOGS ===
@@ -5288,9 +5304,13 @@ def admin_delete_user(user_id):
     except Exception as e:
         db.session.rollback()
         print(f"❌ DELETE ERROR: {str(e)}")
+        # Печатаем полный трейсбэк в консоль для отладки
+        import traceback
+        traceback.print_exc()
         flash(f"Критическая ошибка удаления: {e}", "error")
 
     return redirect(url_for("admin_dashboard"))
+
 @app.route('/groups')
 @login_required
 def groups_list():
