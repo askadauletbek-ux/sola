@@ -22,10 +22,6 @@ from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import subqueryload
 from sqlalchemy.exc import IntegrityError
 
-# --- Добавлен импорт для модерации Google Cloud Vision ---
-from google.cloud import vision
-# --------------------------------------------------------
-
 from flask import (
     Flask,
     abort,
@@ -393,55 +389,40 @@ if "magic_login" not in app.view_functions:
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 bcrypt = Bcrypt(app)
 
-
 def is_image_safe(file_bytes):
     """
-    Проверяет изображение на NSFW и шок-контент через Google Cloud Vision.
-    Строгая синхронная блокировка.
+    Проверяет изображение на NSFW и шок-контент через gpt-4o-mini.
+    Возвращает True (безопасно) или False (шок-контент).
     """
-    import os  # Гарантируем наличие модуля os
-    from google.cloud import vision  # Гарантируем наличие модуля внутри
-
-    # Проверяем переменную окружения прямо перед вызовом
-    key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-
-    # Отладочный принт (появится в journalctl -u health_app.service -f)
-    print(f"DEBUG: Проверка фото. Путь к ключу: {key_path}")
-
-    if not key_path or not os.path.exists(key_path):
-        print(f"!!! ОШИБКА: Файл ключа не найден или путь пустой. Регистрация заблокирована.")
-        return False
-
     try:
-        # Инициализация клиента Google Vision
-        client = vision.ImageAnnotatorClient()
-        image = vision.Image(content=file_bytes)
-
-        # Вызов API (ждем ответа до 10 секунд)
-        response = client.safe_search_detection(image=image, timeout=10.0)
-
-        if response.error.message:
-            print(f"!!! Vision API Error: {response.error.message}")
-            return False
-
-        safe = response.safe_search_annotation
-
-        # Логируем уровни для понимания, на чем забанило
-        print(f"DEBUG: SafeSearch result: Adult={safe.adult}, Violence={safe.violence}, Medical={safe.medical}")
-
-        # Уровни Google: 1 (Very Unlikely) - 5 (Very Likely)
-        # Блокируем 4 (Likely) и 5 (Very Likely)
-        if safe.adult >= 4 or safe.violence >= 4 or safe.medical >= 4:
-            print(f"!!! МОДЕРАЦИЯ НЕ ПРОЙДЕНА: Картинка помечена как опасная.")
-            return False
-
-        print("✅ Модерация пройдена успешно.")
-        return True
-
+        base64_image = base64.b64encode(file_bytes).decode("utf-8")
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Используем mini для максимальной скорости (~1 сек)
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a content moderator for a fitness app. Users upload avatars and body progress photos. "
+                        "Fitness photos in swimwear or underwear are ALLOWED. "
+                        "You MUST REJECT explicit pornography, sexual acts, extreme violence, gore, or illegal content. "
+                        "Return strictly JSON: {\"is_safe\": true/false}"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ],
+            max_tokens=15,
+            response_format={"type": "json_object"}
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result.get("is_safe", True)
     except Exception as e:
-        print(f"!!! КРИТИЧЕСКАЯ ОШИБКА МОДЕРАЦИИ: {type(e).__name__}: {e}")
-        # Если API недоступно или ошибка в коде — НЕ пускаем юзера
-        return False
+        print(f"Moderation AI Error: {e}")
+        return True  # В случае сбоя API пропускаем, чтобы не блокировать регистрацию
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_API_URL   = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
