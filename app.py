@@ -22,6 +22,10 @@ from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import subqueryload
 from sqlalchemy.exc import IntegrityError
 
+# --- Добавлен импорт для модерации Google Cloud Vision ---
+from google.cloud import vision
+# --------------------------------------------------------
+
 from flask import (
     Flask,
     abort,
@@ -389,40 +393,38 @@ if "magic_login" not in app.view_functions:
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 bcrypt = Bcrypt(app)
 
+
 def is_image_safe(file_bytes):
     """
-    Проверяет изображение на NSFW и шок-контент через gpt-4o-mini.
-    Возвращает True (безопасно) или False (шок-контент).
+    Проверяет изображение на NSFW и шок-контент через Google Cloud Vision.
+    Строгая блокировка: возвращает False при любых ошибках или подозрениях.
     """
     try:
-        base64_image = base64.b64encode(file_bytes).decode("utf-8")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Используем mini для максимальной скорости (~1 сек)
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a content moderator for a fitness app. Users upload avatars and body progress photos. "
-                        "Fitness photos in swimwear or underwear are ALLOWED. "
-                        "You MUST REJECT explicit pornography, sexual acts, extreme violence, gore, or illegal content. "
-                        "Return strictly JSON: {\"is_safe\": true/false}"
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            max_tokens=15,
-            response_format={"type": "json_object"}
-        )
-        result = json.loads(response.choices[0].message.content)
-        return result.get("is_safe", True)
+        client = vision.ImageAnnotatorClient()
+        image = vision.Image(content=file_bytes)
+
+        # Синхронный вызов с таймаутом 10 секунд (чтобы юзер не висел вечно, если Google недоступен)
+        response = client.safe_search_detection(image=image, timeout=10.0)
+
+        if response.error.message:
+            print(f"Vision API Error: {response.error.message}")
+            return False
+
+        safe = response.safe_search_annotation
+
+        # Оценки Google: 0-UNKNOWN, 1-VERY_UNLIKELY, 2-UNLIKELY, 3-POSSIBLE, 4-LIKELY, 5-VERY_LIKELY
+        # Т.к. это фитнес-приложение (фото в белье/купальниках), мы пропускаем POSSIBLE (3),
+        # но жестко блокируем LIKELY (4) и VERY_LIKELY (5).
+        if safe.adult >= 4 or safe.violence >= 4 or safe.medical >= 4:
+            print(f"Moderation Rejected. Adult: {safe.adult}, Violence: {safe.violence}")
+            return False
+
+        return True
+
     except Exception as e:
-        print(f"Moderation AI Error: {e}")
-        return True  # В случае сбоя API пропускаем, чтобы не блокировать регистрацию
+        print(f"Cloud Moderation Error: {e}")
+        # ЖЕСТКОЕ ПРАВИЛО: Нет успешного ответа от API = нет регистрации
+        return False
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_API_URL   = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
