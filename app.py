@@ -8402,6 +8402,48 @@ def admin_support_close(ticket_id):
 def admin_recipes_page():
     return render_template("admin_recipes.html")
 
+
+# --- НЕДОСТАЮЩИЕ ФУНКЦИИ ДЛЯ АДМИНКИ ---
+
+@app.route("/admin/user/<int:user_id>/magic", methods=["POST"])
+@admin_required
+def admin_send_magic_link(user_id):
+    """Генерация магической ссылки для входа без пароля"""
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Пользователь не найден", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    s = _magic_serializer()
+    token = s.dumps(user.id)
+    link = url_for("magic_login", token=token, _external=True)
+
+    # Показываем ссылку админу на экране
+    flash(f"🔗 Магическая ссылка для {user.email}: {link}", "success")
+    return redirect(request.referrer or url_for("admin_dashboard"))
+
+
+@app.route("/admin/users/notify", methods=["POST"])
+@admin_required
+def admin_users_notify():
+    """Массовая отправка PUSH уведомлений из админки"""
+    data = request.get_json(silent=True) or {}
+    user_ids = data.get("user_ids", [])
+    title = data.get("title", "Уведомление")
+    body = data.get("body", "")
+
+    if not user_ids or not body:
+        return jsonify({"ok": False, "error": "Нет данных для отправки"}), 400
+
+    sent = 0
+    from notification_service import send_user_notification
+    for uid in user_ids:
+        # Отправляем PUSH
+        if send_user_notification(user_id=uid, title=title, body=body, type='info'):
+            sent += 1
+
+    return jsonify({"ok": True, "sent": sent, "total": len(user_ids)})
+
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
     port = int(os.environ.get("PORT", 5000))
