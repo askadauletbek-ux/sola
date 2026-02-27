@@ -154,25 +154,98 @@ def delete_my_account():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     try:
-        # Каскадное удаление данных (ручное, для надежности)
-        # 1. Логи и активность
-        MealLog.query.filter_by(user_id=user.id).delete()
-        Activity.query.filter_by(user_id=user.id).delete()
-        BodyAnalysis.query.filter_by(user_id=user.id).delete()
-        Diet.query.filter_by(user_id=user.id).delete()
+        from models import (
+            GroupMessage, MessageReaction, MessageReport, GroupTask, GroupMember,
+            SquadScoreLog, Training, TrainingSignup, SubscriptionApplication,
+            Subscription, Order, MealReminderLog, MealLog, Activity, Diet,
+            DietPreference, StagedDiet, BodyVisualization, BodyAnalysis, WeightLog,
+            UserSettings, EmailVerification, UploadedFile, Notification, AnalyticsEvent,
+            UserAchievement, SupportTicket, SupportMessage, ShoppingCart, ShoppingCartItem, AuditLog
+        )
 
-        # 2. Подписки и тренировки
-        Subscription.query.filter_by(user_id=user.id).delete()
-        TrainingSignup.query.filter_by(user_id=user.id).delete()
-
-        # 3. Уведомления
-        Notification.query.filter_by(user_id=user.id).delete()
-
-        # 4. Сам пользователь
-        db.session.delete(user)
+        # 0. Сбрасываем ключи-зависимости профиля
+        user.avatar_file_id = None
+        if hasattr(user, 'full_body_photo_id'):
+            user.full_body_photo_id = None
+        user.initial_body_analysis_id = None
         db.session.commit()
 
-        # 5. Очистка сессии
+        # 1. Группы (если владелец)
+        if getattr(user, "own_group", None):
+            gid = user.own_group.id
+            msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(group_id=gid).all()]
+            if msg_ids:
+                MessageReaction.query.filter(MessageReaction.message_id.in_(msg_ids)).delete(synchronize_session=False)
+                MessageReport.query.filter(MessageReport.message_id.in_(msg_ids)).delete(synchronize_session=False)
+
+            GroupMessage.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            GroupTask.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            GroupMember.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
+
+            group_training_ids = [t.id for t in Training.query.filter_by(group_id=gid).all()]
+            if group_training_ids:
+                TrainingSignup.query.filter(TrainingSignup.training_id.in_(group_training_ids)).delete(
+                    synchronize_session=False)
+                Training.query.filter(Training.id.in_(group_training_ids)).delete(synchronize_session=False)
+            db.session.delete(user.own_group)
+
+        # 2. Подписки и заказы
+        SubscriptionApplication.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Subscription.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Order.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # 3. Базовые логи
+        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        MealLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Activity.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Diet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        DietPreference.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # 4. Настройки, файлы, социальное
+        UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        EmailVerification.query.filter_by(email=user.email).delete(synchronize_session=False)
+        UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        Notification.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        AnalyticsEvent.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        UserAchievement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        MessageReaction.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        user_msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(user_id=user.id).all()]
+        if user_msg_ids:
+            MessageReaction.query.filter(MessageReaction.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
+            MessageReport.query.filter(MessageReport.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
+
+        GroupMessage.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        GroupMember.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        SquadScoreLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        MessageReport.query.filter_by(reporter_id=user.id).delete(synchronize_session=False)
+
+        # 5. Тренировки, Поддержка, Магазин
+        TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
+        if trainer_tids:
+            TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)).delete(synchronize_session=False)
+            Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
+
+        user_ticket_ids = [t.id for t in SupportTicket.query.filter_by(user_id=user.id).all()]
+        if user_ticket_ids:
+            SupportMessage.query.filter(SupportMessage.ticket_id.in_(user_ticket_ids)).delete(synchronize_session=False)
+        SupportTicket.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        cart_ids = [c.id for c in ShoppingCart.query.filter_by(user_id=user.id).all()]
+        if cart_ids:
+            ShoppingCartItem.query.filter(ShoppingCartItem.cart_id.in_(cart_ids)).delete(synchronize_session=False)
+        ShoppingCart.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        AuditLog.query.filter_by(actor_id=user.id).delete(synchronize_session=False)
+
+        # Финал
+        db.session.delete(user)
+        db.session.commit()
         session.clear()
 
         return jsonify({"ok": True, "message": "Account deleted"})

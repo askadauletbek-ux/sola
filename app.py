@@ -443,16 +443,6 @@ def _send_mobile_push(fcm_token: str, title: str, body: str, data: dict = None):
         return False
 
 
-@app.route('/api/activity/today/<int:chat_id>')
-def activity_today(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first()
-    if not user:
-        return jsonify({"error": "not found"}), 404
-    a = Activity.query.filter_by(user_id=user.id, date=date.today()).first()
-    if not a:
-        return jsonify({"present": False})
-    return jsonify({"present": True, "steps": a.steps or 0, "active_kcal": a.active_kcal or 0})
-
 _notifier_started = False
 def _notification_worker():
     # ВАЖНО: весь цикл работает внутри контекста приложения
@@ -631,32 +621,32 @@ def _notification_worker():
                                     days_left = (sub.end_date - now_d).days
 
                                     # --- ИЗМЕНЕНИЕ: Проверяем fcm_token и настройки ---
-                    fcm_token = getattr(u, "fcm_device_token", None)
-                    settings = get_effective_user_settings(u)
+                                    fcm_token = getattr(u, "fcm_device_token", None)
+                                    settings = get_effective_user_settings(u)
 
-                    if days_left == 5 and not u.renewal_telegram_sent and fcm_token and settings.notify_subscription:
-                        try:
+                                    if days_left == 5 and not u.renewal_telegram_sent and fcm_token and settings.notify_subscription:
+                                          try:
                             # ссылка на продление
-                            base = os.getenv("APP_BASE_URL", "").rstrip("/")
-                            purchase_path = url_for("purchase_page") if app and app.app_context else "/purchase"
-                            link = f"{base}{purchase_path}" if base else purchase_path
+                                              base = os.getenv("APP_BASE_URL", "").rstrip("/")
+                                              purchase_path = url_for("purchase_page") if app and app.app_context else "/purchase"
+                                              link = f"{base}{purchase_path}" if base else purchase_path
 
-                            title = "⏳ Подписка истекает"
-                            body = "Осталось 5 дней. Не теряйте доступ к тренировкам — продлите сейчас."
+                                              title = "⏳ Подписка истекает"
+                                              body = "Осталось 5 дней. Не теряйте доступ к тренировкам — продлите сейчас."
 
-                            # --- ИЗМЕНЕНИЕ: Отправляем уведомление (БД + PUSH) ---
-                            from notification_service import send_user_notification
+                                              # --- ИЗМЕНЕНИЕ: Отправляем уведомление (БД + PUSH) ---
+                                              from notification_service import send_user_notification
 
-                            if send_user_notification(
-                                    user_id=u.id,
-                                    title=title,
-                                    body=body,
-                                    type='warning',
-                                    data={"route": "/purchase"}
-                            ):
-                                u.renewal_telegram_sent = True
-                        except Exception:
-                            pass
+                                              if send_user_notification(
+                                                      user_id=u.id,
+                                                      title=title,
+                                                      body=body,
+                                                      type='warning',
+                                                      data={"route": "/purchase"}
+                                              ):
+                                                  u.renewal_telegram_sent = True
+                                          except Exception:
+                                              pass
 
                 if now.minute == 0 and now.hour == 10:
                     two_weeks_ago = now_d - timedelta(days=14)
@@ -3786,22 +3776,6 @@ def update_weight_simple():
 
     return jsonify({"success": True, "new_weight": weight_val})
 
-@app.route('/generate_telegram_code')
-def generate_telegram_code():
-    user_id = session.get('user_id')
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    code = ''.join(random.choices(string.digits, k=8))
-    user = db.session.get(User, user_id)
-    user.telegram_code = code
-    db.session.commit()
-
-    return jsonify({'code': code})
-
-
-
-
 
 @app.route('/edit_profile', methods=['POST'])
 @login_required
@@ -4054,41 +4028,6 @@ def diet_history():
         chart_values=json.dumps(chart_values)
     )
 
-# === TELEGRAM: лог активности по chat_id ===
-@app.route('/api/activity/log', methods=['POST'])
-def api_activity_log():
-    data = request.get_json(force=True, silent=True) or {}
-    chat_id = str(data.get('chat_id') or '').strip()
-    if not chat_id:
-        return jsonify({"error": "chat_id required"}), 400
-
-    user = User.query.filter_by(telegram_chat_id=chat_id).first()
-    if not user:
-        return jsonify({"error": "user not found"}), 404
-
-    try:
-        steps = int(data.get('steps') or 0)
-        active_kcal = int(data.get('active_kcal') or 0)
-    except Exception:
-        return jsonify({"error": "invalid numbers"}), 400
-
-    # перезаписываем активность за сегодня
-    today = date.today()
-    existing = Activity.query.filter_by(user_id=user.id, date=today).first()
-    if existing:
-        db.session.delete(existing)
-        db.session.commit()
-
-    act = Activity(
-        user_id=user.id,
-        date=today,
-        steps=steps,
-        active_kcal=active_kcal,
-        source='telegram'
-    )
-    db.session.add(act)
-    db.session.commit()
-    return jsonify({"ok": True, "message": "activity saved"})
 
 @app.route('/add_meal', methods=['POST'])
 @login_required
@@ -4195,52 +4134,6 @@ def reset_diet():
         # Этот случай тоже обрабатываем, хотя он маловероятен
         return jsonify({'success': True, 'message': 'Нет рациона для сброса.'})
 
-@app.route('/api/link_telegram', methods=['POST'])
-def link_telegram():
-    data = request.json
-    code = data.get("code")
-    chat_id = data.get("chat_id")
-
-    user = User.query.filter_by(telegram_code=code).first()
-    if not user:
-        return jsonify({"error": "Неверный код"}), 404
-
-    user.telegram_chat_id = str(chat_id)
-    user.telegram_code = None
-    db.session.commit()
-    return jsonify({"message": "OK"}), 200
-
-
-@app.route('/api/is_registered/<int:chat_id>')
-def is_registered(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first()
-    if user:
-        return jsonify({"ok": True}), 200
-    return jsonify({"ok": False}), 404
-
-
-@app.route('/api/current_diet/<int:chat_id>')
-def api_current_diet(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first()
-    if not user:
-        return jsonify({"error": "not found"}), 404
-
-    diet = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).first()
-    if not diet:
-        return jsonify({"error": "no diet"}), 404
-
-    return jsonify({
-        "date": diet.date.isoformat(),
-        "breakfast": json.loads(diet.breakfast),
-        "lunch": json.loads(diet.lunch),
-        "dinner": json.loads(diet.dinner),
-        "snack": json.loads(diet.snack),
-        "total_kcal": diet.total_kcal,
-        "protein": diet.protein,
-        "fat": diet.fat,
-        "carbs": diet.carbs
-    })
-
 
 @app.route('/activity')
 @login_required
@@ -4281,64 +4174,6 @@ def activity():
         chart_data=chart_data,
         tab='activity'  # Указываем активный таб
     )
-
-@app.route('/api/log_meal', methods=['POST', 'DELETE'])
-def log_meal():
-    if request.method == 'DELETE':
-        data = request.get_json()
-        user = User.query.filter_by(telegram_chat_id=str(data['chat_id'])).first_or_404()
-        meal = MealLog.query.filter_by(
-            user_id=user.id,
-            date=date.today(),
-            meal_type=data['meal_type']
-        ).first_or_404()
-        db.session.delete(meal)
-        db.session.commit()
-        return '', 200
-
-    # POST
-    data = request.get_json()
-    user = User.query.filter_by(telegram_chat_id=str(data['chat_id'])).first_or_404()
-
-    calories = data.get("calories")
-    protein = data.get("protein")
-    fat = data.get("fat")
-    carbs = data.get("carbs")
-
-    raw = data.get("analysis", "")
-
-    if None in (calories, protein, fat, carbs):
-        def ptn(p):
-            m = re.search(p, raw, flags=re.IGNORECASE)
-            return float(m.group(1)) if m else None
-
-        calories = ptn(r'Калории[:\s]+(\d+)')
-        protein = ptn(r'Белки[:\s]+([\d.]+)')
-        fat = ptn(r'Жиры[:\s]+([\d.]+)')
-        carbs = ptn(r'Углеводы[:\s]+([\d.]+)')
-
-    if None in (calories, protein, fat, carbs):
-        return jsonify({"error": "cannot parse BJU"}), 400
-
-    meal = MealLog(
-        user_id=user.id,
-        date=date.today(),
-        meal_type=data['meal_type'],
-        calories=int(calories),
-        protein=float(protein),
-        fat=float(fat),
-        carbs=float(carbs),
-        analysis=raw or ""  # ИСПРАВЛЕНО: Защита от Null
-    )
-
-    try:
-        db.session.add(meal)
-        recalculate_streak(user)  # <-- Добавлено
-        db.session.commit()
-        return jsonify({"status": "ok"}), 200
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"error": "exists"}), 409
 
 
 # ЭТО ПРАВИЛЬНЫЙ КОД
@@ -4408,20 +4243,6 @@ def analyze_meal_photo():
     except Exception as e:
         return jsonify({"error": f"Ошибка анализа фото: {e}"}), 500
 
-@app.route('/api/subscription/status')
-def subscription_status():
-    chat_id = request.args.get('chat_id')
-    user = None
-    if chat_id:
-        user = User.query.filter_by(telegram_chat_id=str(chat_id)).first()
-    else:
-        user = get_current_user()
-
-    if not user:
-        return jsonify({"ok": False, "reason": "no_user"}), 401
-
-    return jsonify({"ok": True, "has_subscription": bool(getattr(user, 'has_subscription', False))})
-
 
 @app.route('/api/trainings/<int:tid>/checkin', methods=['POST'])
 @login_required
@@ -4454,120 +4275,6 @@ def checkin_training(tid):
             return jsonify({"ok": True, "message": "Уже отмечено"})
 
     return jsonify({"ok": False, "error": "Чекин доступен только во время тренировки"}), 400
-
-@app.route('/api/trainings/my')
-def api_trainings_my():
-    # Фильтрация по локальному времени Алматы, поддержка start_time как datetime *и* как time (+ отдельная дата)
-    from zoneinfo import ZoneInfo
-    from datetime import datetime, date, time as dt_time
-
-    chat_id = request.args.get('chat_id')
-    user = None
-    if chat_id:
-        user = User.query.filter_by(telegram_chat_id=str(chat_id)).first()
-    else:
-        user = get_current_user()
-
-    if not user:
-        return jsonify({"ok": False, "reason": "no_user"}), 401
-
-    tz_almaty = ZoneInfo("Asia/Almaty")
-    tz_utc = ZoneInfo("UTC")
-    now_local = datetime.now(tz_almaty)
-
-    # Берём список тренировок пользователя без фильтра по времени (типы полей могут отличаться),
-    # дальше фильтруем и сортируем в Python.
-    q = (
-        db.session.query(Training)
-        .join(TrainingSignup, TrainingSignup.training_id == Training.id)
-        .filter(TrainingSignup.user_id == user.id)
-        .limit(200)
-    )
-
-    entries = []
-    for t in q.all():
-        # Поля времени/даты могут называться по-разному
-        start_field = getattr(t, 'start_time', None)
-        date_field = (
-            getattr(t, 'start_date', None)
-            or getattr(t, 'date', None)
-            or getattr(t, 'day', None)
-        )
-
-        if not start_field:
-            continue
-
-        # Собираем локальный datetime Алматы
-        local_dt = None
-        if isinstance(start_field, datetime):
-            local_dt = start_field if start_field.tzinfo else start_field.replace(tzinfo=tz_almaty)
-        elif isinstance(start_field, dt_time):
-            # Нужна дата: пробуем взять из date_field
-            if date_field:
-                if isinstance(date_field, datetime):
-                    d = date_field.date()
-                elif isinstance(date_field, date):
-                    d = date_field
-                else:
-                    d = None
-                if d is not None:
-                    local_dt = datetime.combine(d, start_field).replace(tzinfo=tz_almaty)
-        elif isinstance(start_field, date):
-            # Редкий случай: есть только дата — считаем 00:00
-            local_dt = datetime.combine(start_field, dt_time(0, 0)).replace(tzinfo=tz_almaty)
-
-        if not local_dt:
-            # Не смогли восстановить полный datetime — пропускаем
-            continue
-
-        # Отфильтруем прошедшие
-        if local_dt < now_local:
-            continue
-
-        start_utc = local_dt.astimezone(tz_utc)
-
-        entries.append({
-            "id": t.id,
-            "title": getattr(t, 'title', getattr(t, 'name', 'Тренировка')),
-            "start_utc": start_utc,  # для сортировки
-            "start_time": start_utc.isoformat().replace("+00:00", "Z"),
-            "location": getattr(t, 'location', None),
-        })
-
-    # Сортируем по времени начала
-    entries.sort(key=lambda x: (x["start_utc"], x["id"]))
-    # Возвращаем первые 50
-    items = [{k: v for k, v in e.items() if k != "start_utc"} for e in entries[:50]]
-
-    return jsonify({"ok": True, "items": items})
-
-@app.route('/api/meals/today/<int:chat_id>')
-def get_today_meals_api(chat_id):
-    # Находим пользователя по ID чата в телеграме
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first_or_404()
-
-    # Ищем все записи о приемах пищи для этого пользователя за сегодня
-    logs = MealLog.query.filter_by(user_id=user.id, date=date.today()).order_by(MealLog.created_at).all()
-
-    # Считаем итоговые калории
-    total_calories = sum(m.calories for m in logs)
-
-    # Формируем данные для ответа
-    meal_data = [
-        {
-            'meal_type': m.meal_type,
-            'name': m.name or "Без названия",
-            'calories': m.calories,
-            'protein': m.protein,
-            'fat': m.fat,
-            'carbs': m.carbs
-        }
-        for m in logs
-    ]
-
-    return jsonify({"meals": meal_data, "total_calories": total_calories}), 200
-
-
 
 
 @app.route('/metrics')
@@ -4631,19 +4338,6 @@ def metrics():
         missing_activity=missing_activity,
         tab='metrics'  # Указываем активный таб
     )
-
-
-@app.route('/api/registered_chats')
-def registered_chats():
-    """Возвращает список всех телеграм‑chat_id, которые привязаны к пользователям."""
-    chats = (
-        db.session.query(User.telegram_chat_id)
-        .filter(User.telegram_chat_id.isnot(None))
-        .all()
-    )
-    # chats — список кортежей, поэтому разбираем
-    chat_ids = [c[0] for c in chats]
-    return jsonify({"chat_ids": chat_ids})
 
 
 # ---------------- ADMIN PANEL ----------------
@@ -5499,74 +5193,6 @@ def create_group_task(group_id):
     flash(f"{'Объявление' if is_announcement else 'Задача'} '{title}' успешно добавлено!", "success")
     return redirect(url_for('group_detail', group_id=group_id))
 
-
-# Добавьте в app.py
-@app.route('/api/user_progress/<int:chat_id>')
-def get_user_progress(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first_or_404()
-
-    analyses = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).limit(2).all()
-
-    if len(analyses) == 0:
-        return jsonify({"error": "Нет данных для сравнения"}), 404
-
-    latest = analyses[0]
-    previous = analyses[1] if len(analyses) > 1 else None
-
-    def serialize(analysis):
-        if not analysis: return None
-        return {
-            "date": analysis.timestamp.strftime('%d.%m.%Y'),
-            "weight": analysis.weight,
-            "fat_mass": analysis.fat_mass,
-            "muscle_mass": analysis.muscle_mass
-        }
-
-    return jsonify({
-        "latest": serialize(latest),
-        "previous": serialize(previous)
-    })
-
-# Добавьте в app.py
-
-@app.route('/api/meal_history/<int:chat_id>')
-def get_meal_history(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first_or_404()
-    page = request.args.get('page', 1, type=int)
-
-    # Группируем приемы пищи по дням и считаем сумму калорий
-    daily_meals = db.session.query(
-        MealLog.date,
-        func.sum(MealLog.calories).label('total_calories'),
-        func.count(MealLog.id).label('meal_count')
-    ).filter_by(user_id=user.id).group_by(MealLog.date).order_by(MealLog.date.desc()).paginate(page=page, per_page=5, error_out=False)
-
-    return jsonify({
-        "days": [
-            {"date": d.date.strftime('%d.%m.%Y'), "total_calories": d.total_calories, "meal_count": d.meal_count}
-            for d in daily_meals.items
-        ],
-        "has_next": daily_meals.has_next,
-        "has_prev": daily_meals.has_prev,
-        "page": page
-    })
-
-@app.route('/api/activity_history/<int:chat_id>')
-def get_activity_history(chat_id):
-    user = User.query.filter_by(telegram_chat_id=str(chat_id)).first_or_404()
-    page = request.args.get('page', 1, type=int)
-
-    daily_activity = Activity.query.filter_by(user_id=user.id).order_by(Activity.date.desc()).paginate(page=page, per_page=5, error_out=False)
-
-    return jsonify({
-        "days": [
-            {"date": a.date.strftime('%d.%m.%Y'), "steps": a.steps, "active_kcal": a.active_kcal}
-            for a in daily_activity.items
-        ],
-        "has_next": daily_activity.has_next,
-        "has_prev": daily_activity.has_prev,
-        "page": page
-    })
 
 @app.route('/groups/tasks/<int:task_id>/delete', methods=['POST'])
 @login_required
@@ -6555,61 +6181,6 @@ def get_tg_settings():
     })
 
 
-@app.route('/api/me/telegram/settings', methods=['POST','PATCH'])
-@login_required
-def patch_tg_settings():
-    u = get_current_user()
-    s = get_effective_user_settings(u)
-
-    data = request.get_json(silent=True) or request.form.to_dict(flat=True) or {}
-
-    def to_bool(v):
-        if isinstance(v, bool): return v
-        if isinstance(v, (int, float)): return v != 0
-        if v is None: return False
-        return str(v).strip().lower() in ("1","true","yes","on","y")
-
-    alias_map = {
-        "telegram_notify_enabled":         "telegram_notify_enabled",
-        "telegram_notifications_enabled":  "telegram_notify_enabled",  # алиас
-        "notify_trainings":                "notify_trainings",
-        "notify_subscription":             "notify_subscription",
-        "notify_promos":                   "notify_subscription",       # алиас
-        "notify_meals":                    "notify_meals",
-    }
-
-    touched = {}
-    for incoming_key, model_attr in alias_map.items():
-        if incoming_key in data:
-            val = to_bool(data[incoming_key])
-            setattr(s, model_attr, val)   # источник истины
-            setattr(u, model_attr, val)   # для обратной совместимости
-            touched[model_attr] = val
-
-    if "meal_timezone" in data:
-        tz = (data.get("meal_timezone") or "").strip()
-        try:
-            ZoneInfo(tz)  # валидация
-        except Exception:
-            return jsonify({"ok": False, "error": "invalid_timezone"}), 400
-        s.meal_timezone = tz
-        touched["meal_timezone"] = tz
-
-    db.session.add_all([s, u])
-    db.session.commit()
-
-    resp = jsonify({
-        "ok": True,
-        "saved": touched,
-        "telegram_notify_enabled": bool(s.telegram_notify_enabled),
-        "notify_trainings":        bool(s.notify_trainings),
-        "notify_subscription":     bool(s.notify_subscription),
-        "notify_meals":            bool(s.notify_meals),
-        "notify_promos":           bool(s.notify_subscription),
-    })
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
 # ===== ADMIN: AI Очередь (модерация MealLog) =====
 
 @app.route("/admin/ai")
@@ -6805,200 +6376,6 @@ def admin_prompts_activate(pid):
     return redirect(url_for("admin_prompts"))
 
 
-# ===== ADMIN: Рассылки в Telegram =====
-@app.route("/admin/users/notify", methods=["POST"])
-@admin_required
-def admin_users_notify():
-    data = request.get_json(force=True, silent=True) or {}
-    user_ids = data.get("user_ids", [])
-    title = data.get("title", "").strip()
-    body = data.get("body", "").strip()
-
-    if not user_ids or not title or not body:
-        return jsonify({"ok": False, "error": "Не заполнены данные"}), 400
-
-    # Извлекаем новые параметры кастомизации
-    image_url = data.get("image_url", "").strip()
-    text_color = data.get("text_color", "").strip()
-    bg_color = data.get("bg_color", "").strip()
-
-    custom_data = {}
-    if image_url: custom_data["image_url"] = image_url
-    if text_color: custom_data["text_color"] = text_color
-    if bg_color: custom_data["bg_color"] = bg_color
-
-    success_count = 0
-
-    # Получаем пользователей
-    users = User.query.filter(User.id.in_(user_ids)).all()
-
-    for u in users:
-        # Отправляем PUSH (функция сама разберется, есть ли токен)
-        sent = send_user_notification(
-            user_id=u.id,
-            title=title,
-            body=body,
-            type="info",  # Можно сделать настраиваемым
-            data=custom_data.copy() if custom_data else None
-        )
-        if sent:
-            success_count += 1
-
-    return jsonify({"ok": True, "sent": success_count, "total": len(users)})
-
-@app.route("/admin/broadcast", methods=["GET", "POST"])
-@admin_required
-def admin_broadcast():
-    if request.method == "POST":
-        text = request.form["text"].strip()
-        only_active = bool(request.form.get("only_active"))
-        q = db.session.query(User.telegram_chat_id, User.id).filter(User.telegram_chat_id.isnot(None))
-        if only_active:
-            q = q.join(Subscription, Subscription.user_id == User.id).filter(Subscription.status == 'active')
-        rows = q.all()
-        sent = 0
-        for chat_id, uid in rows:
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                    json={"chat_id": chat_id, "text": text},
-                    timeout=10
-                )
-                sent += 1
-            except Exception:
-                pass
-        log_audit("broadcast_send", "Telegram", "bulk", new={"text": text, "only_active": only_active, "sent": sent})
-        flash(f"Отправлено: {sent}", "success")
-        return redirect(url_for("admin_broadcast"))
-    return render_template("admin_broadcast.html")
-
-
-@app.post("/admin/users/<int:user_id>/telegram/test")
-@admin_required
-def admin_user_send_test_tg(user_id):
-    user = db.session.get(User, user_id) or abort(404)
-    if not user.telegram_chat_id:
-        flash("Telegram не привязан у пользователя.", "error")
-        return redirect(url_for("admin_user_detail", user_id=user.id))
-
-    text = (request.form.get("text") or f"Привет, {user.name}! Это тестовое сообщение 💬").strip()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        flash("TELEGRAM_BOT_TOKEN не задан в окружении.", "error")
-        return redirect(url_for("admin_user_detail", user_id=user.id))
-
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": user.telegram_chat_id, "text": text},
-            timeout=10
-        )
-        r.raise_for_status()
-        flash("Тестовое сообщение отправлено.", "success")
-        try:
-            log_audit("telegram_test_sent", "User", user.id, new={"text_len": len(text)})
-        except Exception:
-            pass
-    except Exception as e:
-        flash(f"Ошибка отправки: {e}", "error")
-
-    return redirect(url_for("admin_user_detail", user_id=user.id))
-@app.post("/api/me/telegram/unlink")
-@login_required
-def user_unlink_telegram():
-    """Снимает привязку Telegram и выключает уведомления (совместимо со старым UI)."""
-    u = get_current_user()
-    if not u:
-        abort(401)
-
-    already = not bool(getattr(u, "telegram_chat_id", None))
-    # Снимаем chat_id
-    u.telegram_chat_id = None
-
-    # Выключаем уведомления и синхронизируем с UserSettings
-    try:
-        u.telegram_notify_enabled = False
-    except Exception:
-        pass
-
-    try:
-        if getattr(u, "settings", None):
-            u.settings.telegram_notify_enabled = False
-    except Exception:
-        pass
-
-    db.session.commit()
-    return jsonify({"ok": True, "already": already})
-
-# Запасной маршрут для старого фронта/кнопок (вы вызывали /unlink_telegram)
-@app.post("/unlink_telegram")
-@login_required
-def unlink_telegram_alias():
-    return user_unlink_telegram()
-
-@app.post("/admin/users/<int:user_id>/telegram/unlink")
-@admin_required
-def admin_user_unlink_telegram(user_id):
-    user = db.session.get(User, user_id) or abort(404)
-    old = {"telegram_chat_id": user.telegram_chat_id}
-    user.telegram_chat_id = None
-    db.session.commit()
-    flash("Telegram отвязан.", "success")
-    try:
-        log_audit("telegram_unlink", "User", user.id, old=old, new={"telegram_chat_id": None})
-    except Exception:
-        pass
-    return redirect(url_for("admin_user_detail", user_id=user.id))
-
-
-
-@app.route("/admin/user/<int:user_id>/reset_telegram", methods=["GET","POST"], endpoint="admin_reset_telegram")
-@admin_required
-def admin_reset_telegram(user_id):
-    user = db.session.get(User, user_id) or abort(404)
-    old = {
-        "telegram_chat_id": getattr(user, "telegram_chat_id", None),
-        "telegram_code": getattr(user, "telegram_code", None),
-    }
-    user.telegram_chat_id = None
-    user.telegram_code = None
-    if hasattr(user, "renewal_telegram_sent"):
-        user.renewal_telegram_sent = False
-    db.session.commit()
-    try:
-        log_audit("reset_telegram", "User", user.id, old=old, new={"telegram_chat_id": None, "telegram_code": None})
-    except Exception:
-        pass
-    flash("Связка с Telegram сброшена.", "success")
-    return redirect(url_for("admin_user_detail", user_id=user.id))
-
-
-# генерация/отправка магической ссылки из админки
-@app.route("/admin/user/<int:user_id>/send_magic_link", methods=["GET","POST"], endpoint="admin_send_magic_link")
-@admin_required
-def admin_send_magic_link(user_id):
-    user = db.session.get(User, user_id) or abort(404)
-    s = _magic_serializer()
-    token = s.dumps(str(user.id))
-
-    base = os.getenv("APP_BASE_URL", "").rstrip("/")
-    magic_url = (
-        f"{base}{url_for('magic_login', token=token)}"
-        if base else url_for("magic_login", token=token, _external=True)
-    )
-
-    sent = False
-    if getattr(user, "telegram_chat_id", None):
-        sent = _send_telegram(user.telegram_chat_id, f"🔑 Вход без пароля: {magic_url}")
-
-    try:
-        log_audit("magic_link", "User", user.id, new={"sent_to_telegram": bool(sent)})
-    except Exception:
-        pass
-
-    msg = "Ссылка сгенерирована. " + ("Отправлена в Telegram. " if sent else "")
-    flash(f"{msg}Скопируйте при необходимости: {magic_url}", "success")
-    return redirect(url_for("admin_user_detail", user_id=user.id))
 
 @app.route("/admin/users/<int:user_id>/export", methods=["GET","POST"], endpoint="admin_user_export")
 @admin_required
