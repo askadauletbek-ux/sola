@@ -1,0 +1,24 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [ develop ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/health_app_staging
+            git checkout develop
+            git pull origin develop
+            source venv/bin/activate
+            pip install -r requirements.txt
+            # flask db upgrade  # Раскомментируйте, если используете миграции
+            systemctl restart health_staging
