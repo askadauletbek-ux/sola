@@ -397,33 +397,50 @@ bcrypt = Bcrypt(app)
 def is_image_safe(file_bytes):
     """
     Проверяет изображение на NSFW и шок-контент через Google Cloud Vision.
-    Строгая блокировка: возвращает False при любых ошибках или подозрениях.
+    Строгая синхронная блокировка.
     """
+    import os  # Гарантируем наличие модуля os
+    from google.cloud import vision  # Гарантируем наличие модуля внутри
+
+    # Проверяем переменную окружения прямо перед вызовом
+    key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+    # Отладочный принт (появится в journalctl -u health_app.service -f)
+    print(f"DEBUG: Проверка фото. Путь к ключу: {key_path}")
+
+    if not key_path or not os.path.exists(key_path):
+        print(f"!!! ОШИБКА: Файл ключа не найден или путь пустой. Регистрация заблокирована.")
+        return False
+
     try:
+        # Инициализация клиента Google Vision
         client = vision.ImageAnnotatorClient()
         image = vision.Image(content=file_bytes)
 
-        # Синхронный вызов с таймаутом 10 секунд (чтобы юзер не висел вечно, если Google недоступен)
+        # Вызов API (ждем ответа до 10 секунд)
         response = client.safe_search_detection(image=image, timeout=10.0)
 
         if response.error.message:
-            print(f"Vision API Error: {response.error.message}")
+            print(f"!!! Vision API Error: {response.error.message}")
             return False
 
         safe = response.safe_search_annotation
 
-        # Оценки Google: 0-UNKNOWN, 1-VERY_UNLIKELY, 2-UNLIKELY, 3-POSSIBLE, 4-LIKELY, 5-VERY_LIKELY
-        # Т.к. это фитнес-приложение (фото в белье/купальниках), мы пропускаем POSSIBLE (3),
-        # но жестко блокируем LIKELY (4) и VERY_LIKELY (5).
+        # Логируем уровни для понимания, на чем забанило
+        print(f"DEBUG: SafeSearch result: Adult={safe.adult}, Violence={safe.violence}, Medical={safe.medical}")
+
+        # Уровни Google: 1 (Very Unlikely) - 5 (Very Likely)
+        # Блокируем 4 (Likely) и 5 (Very Likely)
         if safe.adult >= 4 or safe.violence >= 4 or safe.medical >= 4:
-            print(f"Moderation Rejected. Adult: {safe.adult}, Violence: {safe.violence}")
+            print(f"!!! МОДЕРАЦИЯ НЕ ПРОЙДЕНА: Картинка помечена как опасная.")
             return False
 
+        print("✅ Модерация пройдена успешно.")
         return True
 
     except Exception as e:
-        print(f"Cloud Moderation Error: {e}")
-        # ЖЕСТКОЕ ПРАВИЛО: Нет успешного ответа от API = нет регистрации
+        print(f"!!! КРИТИЧЕСКАЯ ОШИБКА МОДЕРАЦИИ: {type(e).__name__}: {e}")
+        # Если API недоступно или ошибка в коде — НЕ пускаем юзера
         return False
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
