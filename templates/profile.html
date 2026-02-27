@@ -887,22 +887,6 @@ function showSlide(index) {
 
 <div id="body-measure-card" class="card p-6">
        <div class="relative text-center">
-    <div class="absolute top-0 right-0 z-10">
-        <button
-            onclick="openTelegramModal()"
-            title="Привязать Telegram"
-            aria-label="Привязать Telegram"
-            class="tg-attn-btn relative p-2 rounded-full hover:bg-slate-100 transition-colors {% if user.telegram_chat_id %}linked{% endif %}">
-
-            <i class="bi bi-telegram tg-icon"></i>
-
-            {% if not user.telegram_chat_id %}
-            <span class="tg-ping tg-ping--1"></span>
-            <span class="tg-ping tg-ping--2"></span>
-            {% else %}
-            {% endif %}
-        </button>
-    </div>
 
 
     {% if user.avatar %}
@@ -1063,17 +1047,6 @@ function showSlide(index) {
         </form>
     </div>
 
-
-    {% if not user.telegram_chat_id %}
-    <div class="card p-6 bg-blue-50 border-blue-200 text-center">
-        <h3 class="font-bold text-blue-800">Получайте уведомления в Telegram</h3>
-        <p class="text-sm text-blue-700 mt-1 mb-4">Привяжите аккаунт, чтобы получать диету и напоминания прямо в мессенджер.</p>
-        <button onclick="openTelegramModal()" class="btn btn-primary w-full">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4" /></svg>
-            Привязать Telegram
-        </button>
-    </div>
-    {% endif %}
 
     <div class="card p-6 relative">
         <div {% if not current_user.has_subscription %}class="locked-feature"{% endif %}>
@@ -1681,89 +1654,6 @@ function showSlide(index) {
   <p class="mt-4 text-lg font-semibold text-slate-700">Генерируем ваш идеальный рацион...</p>
   <p class="text-slate-500">Это может занять до 30 секунд.</p>
 </div>
-
-<div id="telegramModal" role="dialog" aria-modal="true" aria-labelledby="telegramModalTitle"
-     class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4"
-     data-bot="{{ bot_username|default('TestKilogrBot') }}">
-  <div class="card w-full max-w-2xl p-6 sm:p-8 relative animate-fade-in bg-white" onclick="event.stopPropagation()">
-
-    <button onclick="closeTelegramModal()" class="absolute top-4 right-4 text-slate-400 text-2xl hover:text-slate-600 transition-colors" aria-label="Закрыть">&times;</button>
-    <div class="flex items-center gap-3 mb-4">
-      <div class="h-10 w-10 rounded-xl bg-sky-100 flex items-center justify-center text-sky-600">✈️</div>
-      <div>
-        <h2 id="telegramModalTitle" class="text-lg sm:text-xl font-bold text-slate-900">Привязка Telegram</h2>
-        <p class="text-slate-600 text-sm">Свяжите аккаунт, чтобы получать уведомления и делиться данными мгновенно.</p>
-      </div>
-    </div>
-
-    <div class="flex items-center gap-2 text-sm mb-5">
-      <span class="relative flex h-2.5 w-2.5">
-        <span class="absolute inline-flex h-full w-full rounded-full animate-ping bg-amber-400" id="tgStatusPing"></span>
-        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" id="tgStatusDot"></span>
-      </span>
-      <span id="tgStatusText" class="text-slate-600">Статус: ...</span>
-      <span class="ml-auto text-xs text-slate-500">
-        Бот: <a id="tgBotLink" class="font-medium text-blue-600 hover:underline" target="_blank" rel="noopener"><span id="tgBotName"></span></a>
-      </span>
-    </div>
-
-    <div id="tg-unlinked-view">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="space-y-4">
-          <ol class="text-xs text-slate-500 space-y-2">
-            <li class="flex items-center gap-2"><span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-semibold">1</span> Откройте Telegram</li>
-            <li class="flex items-center gap-2"><span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-semibold">2</span> Найдите бота <span class="font-medium text-blue-600">@TestKilogrBot</span></li>
-            <li class="flex items-center gap-2"><span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-semibold">3</span> Отправьте ему ваш код</li>
-          </ol>
-          <div class="space-y-3">
-            <div id="tgCodeDisplay" class="font-mono text-2xl tracking-wider select-all px-4 py-3 rounded-xl bg-slate-50 border border-slate-200">...</div>
-            <div class="flex gap-3">
-              <button onclick="copyCode()" class="btn btn-secondary w-full">📋 Скопировать</button>
-              <a id="tgDeepLink" class="btn btn-primary w-full text-center" target="_blank" rel="noopener">Автопривязка</a>
-            </div>
-          </div>
-        </div>
-        <div class="rounded-xl border border-slate-200 p-4 bg-slate-50 flex flex-col items-center justify-center text-center">
-            <div class="text-4xl mb-2">🔔</div>
-            <h3 class="font-semibold text-slate-700">Настройки уведомлений</h3>
-            <p class="text-xs text-slate-500 mt-1">После привязки вы сможете управлять оповещениями здесь.</p>
-        </div>
-      </div>
-    </div>
-
-    <div id="tg-linked-view" class="hidden">
-      <div class="rounded-xl border border-slate-200 p-4 space-y-3">
-        <div class="flex items-center justify-between py-2 border-b border-slate-200">
-          <div class="text-sm">
-            <div class="font-medium text-slate-800">Получать уведомления в Telegram</div>
-            <div class="text-slate-500 text-xs">Отключает/включает все уведомления разом</div>
-          </div>
-          <button id="tgSwitchGlobal" role="switch" aria-checked="false" data-key="telegram_notify_enabled" class="w-12 h-7 rounded-full bg-slate-300 relative transition">
-              <span class="knob absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition"></span>
-          </button>
-        </div>
-        <div class="flex items-center justify-between">
-          <div class="text-sm"><div class="font-medium text-slate-800">Тренировки</div><div class="text-slate-500 text-xs">Напоминание за 1 час и в момент старта</div></div>
-          <button id="tgSwitchTrainings" role="switch" aria-checked="true" data-key="notify_trainings" class="w-12 h-7 rounded-full bg-emerald-500 relative transition"><span class="knob absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition"></span></button>
-        </div>
-        <div class="flex items-center justify-between">
-            <div class="text-sm"><div class="font-medium text-slate-800">Приёмы пищи</div><div class="text-slate-500 text-xs">в 8:00 · 12:00 · 18:00</div></div>
-            <button id="tgSwitchMeals" role="switch" aria-checked="true" data-key="notify_meals" class="w-12 h-7 rounded-full bg-emerald-500 relative transition"><span class="knob absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition"></span></button>
-        </div>
-        <div class="flex items-center justify-between">
-          <div class="text-sm"><div class="font-medium text-slate-800">Продление подписки</div><div class="text-slate-500 text-xs">Напоминание за 5 дней до окончания</div></div>
-          <button id="tgSwitchSubscription" role="switch" aria-checked="true" data-key="notify_subscription" class="w-12 h-7 rounded-full bg-emerald-500 relative transition"><span class="knob absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition"></span></button>
-        </div>
-      </div>
-       <div class="mt-4 text-center">
-            <button onclick="unlinkTelegram()" class="text-sm font-medium text-red-500 hover:text-red-700 hover:underline">Отвязать аккаунт</button>
-       </div>
-    </div>
-
-  </div>
-</div>
-
-
 <div id="editProfileModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4" onclick="closeEditProfileModal()">
   <div class="card w-full max-w-lg p-6 sm:p-8 relative animate-fade-in" onclick="event.stopPropagation()">
     <button onclick="closeEditProfileModal()" class="absolute top-4 right-4 text-slate-400 text-2xl hover:text-slate-600">&times;</button>
@@ -1829,8 +1719,36 @@ function showSlide(index) {
             <button type="submit" class="btn btn-primary">Сменить пароль</button>
         </div>
     </form>
+
+    <hr class="my-6 border-slate-200">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-red-50 p-4 rounded-lg border border-red-200 gap-4">
+        <div>
+            <h3 class="text-red-800 font-bold text-sm">Опасная зона</h3>
+            <p class="text-xs text-red-600 mt-1">Удаление аккаунта навсегда сотрет все ваши данные и отменит подписки.</p>
+        </div>
+        <button onclick="deleteMyAccount()" class="btn bg-red-600 hover:bg-red-700 text-white text-sm shrink-0">Удалить аккаунт</button>
+    </div>
   </div>
 </div>
+
+<script>
+function deleteMyAccount() {
+    if (confirm("Вы абсолютно уверены? Это действие необратимо. Вся ваша история, фото и прогресс будут удалены.")) {
+        fetch('/api/me/delete', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.ok) {
+                alert("Ваш аккаунт успешно удален.");
+                window.location.href = '/login';
+            } else {
+                alert("Ошибка удаления: " + data.error);
+            }
+        }).catch(err => {
+            alert("Сетевая ошибка. Не удалось удалить аккаунт.");
+        });
+    }
+}
+</script>
 
 <style>
 /* Стили для табов модального окна */
@@ -2014,74 +1932,6 @@ function showSlide(index) {
                 alert('Сетевая ошибка: ' + err.message);
             });
     }
-
-// --- Логика для модального окна Telegram ---
-let tgPollTimer = null;
-
-// НОВАЯ ФУНКЦИЯ для переключения интерфейса на "привязанный" вид
-function switchToLinkedView() {
-    document.getElementById('tg-unlinked-view').classList.add('hidden');
-    document.getElementById('tg-linked-view').classList.remove('hidden');
-
-    // Обновляем заголовок и статус
-    const modalTitle = document.getElementById('telegramModalTitle');
-    if (modalTitle) modalTitle.textContent = 'Управление Telegram';
-    setTgStatusLinked();
-    stopTgPolling();
-
-    // Загружаем актуальные настройки уведомлений
-    loadTgSettings();
-}
-
-// ИЗМЕНЕННАЯ ФУНКЦИЯ открытия модального окна
-async function openTelegramModal() {
-    // Сначала проверяем текущий статус
-    const statusRes = await fetch('/api/me/telegram/status');
-    const statusData = await statusRes.json();
-
-    const modal = document.getElementById('telegramModal');
-    const bot = (modal?.dataset?.bot) || '';
-
-    // Настраиваем ссылки на бота в любом случае
-    const botNameEl = document.getElementById('tgBotName');
-    if (botNameEl) botNameEl.textContent = bot || '';
-    const botLinkEl = document.getElementById('tgBotLink');
-    if (botLinkEl && bot) botLinkEl.href = `https://t.me/${bot}`;
-
-    if (statusData && statusData.linked) {
-        // Если уже привязан, просто показываем нужный интерфейс
-        openModal('telegramModal');
-        switchToLinkedView();
-    } else {
-        // Если не привязан, генерируем новый код
-        const codeRes = await fetch('/generate_telegram_code');
-        const codeData = await codeRes.json();
-
-        if (!codeData.code) { alert('Не удалось сгенерировать код.'); return; }
-
-        // Показываем блок для привязки
-        document.getElementById('tg-linked-view').classList.add('hidden');
-        document.getElementById('tg-unlinked-view').classList.remove('hidden');
-
-        // Возвращаем исходный заголовок
-        const modalTitle = document.getElementById('telegramModalTitle');
-        if (modalTitle) modalTitle.textContent = 'Привязка Telegram';
-
-        // Обновляем код и диплинк
-        const codeEl = document.getElementById('tgCodeDisplay');
-        if (codeEl) codeEl.textContent = codeData.code;
-        const deepLinkEl = document.getElementById('tgDeepLink');
-        if (deepLinkEl && bot) deepLinkEl.href = `https://t.me/${bot}?start=${encodeURIComponent(codeData.code)}`;
-
-        setTgStatusWaiting();
-        openModal('telegramModal');
-        startTgPolling(); // Запускаем проверку
-    }
-
-    // Обработчики для переключателей вешаем один раз
-    bindTgSwitches();
-}
-
 
 // --- НОВОЕ: UI переключателей
 function renderSwitch(btn, isOn) {

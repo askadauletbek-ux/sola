@@ -39,7 +39,7 @@
     aiq: "{{ url_for('admin_ai_queue') }}",
     jobs: "{{ url_for('admin_jobs') }}",
     prompts: "{{ url_for('admin_prompts') }}",
-    broadcast: "{{ url_for('admin_broadcast') }}",
+    sales: "{{ url_for('admin_sales_report') }}",
     audit: "{{ url_for('admin_audit') }}",
     reports: "{{ url_for('admin_reports') }}",
     analytics: "{{ url_for('admin_analytics_page') }}",
@@ -99,9 +99,9 @@
           <span class="text-2xl group-hover:scale-110 transition">⏱</span>
           <span class="text-xs font-medium text-gray-600 mt-1">Cron Jobs</span>
       </a>
-      <a :href="urls.broadcast" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">📣</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Рассылка</span>
+      <a :href="urls.sales" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-emerald-300 hover:shadow-md transition group">
+          <span class="text-2xl group-hover:scale-110 transition">💰</span>
+          <span class="text-xs font-medium text-gray-600 mt-1">Продажи</span>
       </a>
   </div>
 
