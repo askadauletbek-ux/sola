@@ -8444,6 +8444,29 @@ def admin_users_notify():
 
     return jsonify({"ok": True, "sent": sent, "total": len(user_ids)})
 
+@app.route("/admin/sales")
+@admin_required
+def admin_sales_report():
+    """Отчет по проданным подпискам"""
+    # Берем оплаченные или активные заказы
+    orders = Order.query.filter(Order.status.in_(['paid', 'completed'])).order_by(Order.created_at.desc()).all()
+
+    total_revenue = sum(o.amount for o in orders)
+    total_sales = len(orders)
+
+    # Считаем продажи по типам подписок (1m, 3m, 12m и тд)
+    sales_by_type = {}
+    for o in orders:
+        t = o.subscription_type or 'unknown'
+        sales_by_type[t] = sales_by_type.get(t, 0) + 1
+
+    return render_template(
+        "admin_sales.html",
+        orders=orders,
+        total_revenue=total_revenue,
+        total_sales=total_sales,
+        sales_by_type=sales_by_type
+    )
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
     port = int(os.environ.get("PORT", 5000))
