@@ -4346,109 +4346,55 @@ def metrics():
 @admin_required
 def admin_dashboard():
     page = request.args.get('page', 1, type=int)
-    # Разбиваем на страницы (по 50 пользователей)
-    users_pagination = User.query.order_by(User.id).paginate(page=page, per_page=50, error_out=False)
-    users = users_pagination.items
+    search = request.args.get('search', '').strip()
+
+    # Глобальные метрики для дашборда (KPI)
+    total_users = User.query.count()
+    active_subs = Subscription.query.filter_by(status='active').count()
+    total_trainers = User.query.filter_by(is_trainer=True).count()
+
+    # Активность за сегодня
     today = date.today()
+    meals_today = db.session.query(func.count(func.distinct(MealLog.user_id))).filter(
+        func.date(MealLog.created_at) == today).scalar() or 0
+    activity_today = Activity.query.filter_by(date=today).count()
+
+    # Фильтрация и пагинация пользователей
+    query = User.query
+    if search:
+        query = query.filter(or_(User.email.ilike(f"%{search}%"), User.name.ilike(f"%{search}%")))
+
+    users_pagination = query.order_by(User.id.desc()).paginate(page=page, per_page=50, error_out=False)
+
+    # Оптимизированная загрузка базовых статусов (без тяжелой аналитики)
+    users = users_pagination.items
+    user_ids = [u.id for u in users]
+
+    # Загружаем наличие подписки массово
+    active_sub_user_ids = [sub.user_id for sub in Subscription.query.filter(Subscription.user_id.in_(user_ids),
+                                                                            Subscription.status == 'active').all()]
 
     statuses = {}
-    details = {}
-
-    # Define metrics consistent with profile.html
-    metrics_def = [
-        ('Рост', 'height', '📏', 'см', True),
-        ('Вес', 'weight', '⚖️', 'кг', False),
-        ('Мышцы', 'muscle_mass', '💪', 'кг', True),
-        ('Жир', 'fat_mass', '🧈', 'кг', False),
-        ('Вода', 'body_water', '💧', '%', True),
-        ('Метаболизм', 'metabolism', '⚡', 'ккал', True),
-        ('Белок', 'protein_percentage', '🥚', '%', True),
-        ('Висц. жир', 'visceral_fat_rating', '🔥', '', False),
-        ('ИМТ', 'bmi', '📐', '', False),
-    ]
-
     for u in users:
-        # statuses
-        has_meal = MealLog.query.filter_by(user_id=u.id, date=today).count() > 0
-        has_activity = Activity.query.filter_by(user_id=u.id, date=today).count() > 0
         statuses[u.id] = {
-            'meal': has_meal,
-            'activity': has_activity,
-            'subscription_active': u.has_subscription,
+            'subscription_active': u.id in active_sub_user_ids,
             'owns_group': bool(u.own_group)
-        }
-        # meals
-        meals = MealLog.query.filter_by(user_id=u.id, date=today).all()
-        meals_data = [{
-            'type': m.meal_type,
-            'cal': m.calories,
-            'prot': m.protein,
-            'fat': m.fat,
-            'carbs': m.carbs
-        } for m in meals]
-
-        # activity
-        act = Activity.query.filter_by(user_id=u.id, date=today).first()
-        activity_data = None
-        if act:
-            activity_data = {
-                'steps': act.steps,
-                'active_kcal': act.active_kcal,
-                'resting_kcal': act.resting_kcal,
-                'distance_km': act.distance_km,
-                'hr_avg': act.heart_rate_avg
-            }
-
-        # body analysis
-        last = BodyAnalysis.query.filter_by(user_id=u.id) \
-            .order_by(BodyAnalysis.timestamp.desc()).first()
-        prev = BodyAnalysis.query.filter_by(user_id=u.id) \
-            .order_by(BodyAnalysis.timestamp.desc()).offset(1).first()
-
-        # metrics with deltas
-        metrics = []
-        for label, field, icon, unit, good_up in metrics_def:
-            cur = getattr(last, field, None)
-            pr = getattr(prev, field, None)
-            diff = pct = arrow = None
-            is_good = None
-            if cur is not None and pr is not None:
-                diff = cur - pr
-                if pr != 0:
-                    pct = diff / pr * 100
-                arrow = '↑' if diff > 0 else '↓' if diff < 0 else ''
-                # Handle cases where diff is 0 for arrow display
-                if diff == 0:
-                    arrow = ''  # No arrow for no change
-                    is_good = True  # Can consider no change as good/neutral
-                else:
-                    is_good = (diff > 0 and good_up) or (diff < 0 and not good_up)
-            metrics.append({
-                'label': label,
-                'icon': icon,
-                'unit': unit,
-                'cur': cur,
-                'diff': diff,
-                'pct': pct,
-                'arrow': arrow,
-                'is_good': is_good
-            })
-
-        details[u.id] = {
-            'meals': meals_data,
-            'activity': activity_data,
-            'metrics': metrics
         }
 
     return render_template(
         "admin_dashboard.html",
         users=users,
-        pagination=users_pagination,  # <-- Новое
+        pagination=users_pagination,
         statuses=statuses,
-        details=details,
-        today=today
+        search=search,
+        stats={
+            "total_users": total_users,
+            "active_subs": active_subs,
+            "total_trainers": total_trainers,
+            "meals_today": meals_today,
+            "activity_today": activity_today
+        }
     )
-
 
 # --- ADMIN: SQUADS CONTROL ---
 
@@ -8444,29 +8390,45 @@ def admin_users_notify():
 
     return jsonify({"ok": True, "sent": sent, "total": len(user_ids)})
 
+
 @app.route("/admin/sales")
 @admin_required
 def admin_sales_report():
     """Отчет по проданным подпискам"""
-    # Берем оплаченные или активные заказы
     orders = Order.query.filter(Order.status.in_(['paid', 'completed'])).order_by(Order.created_at.desc()).all()
 
-    total_revenue = sum(o.amount for o in orders)
+    total_revenue = sum(o.amount for o in orders if o.amount)
     total_sales = len(orders)
 
-    # Считаем продажи по типам подписок (1m, 3m, 12m и тд)
     sales_by_type = {}
+    chart_data_map = {}
+
     for o in orders:
+        # Группировка по типам подписок
         t = o.subscription_type or 'unknown'
         sales_by_type[t] = sales_by_type.get(t, 0) + 1
+
+        # Группировка по датам для графика (последние 30 дней)
+        d_str = o.created_at.strftime("%d.%m")
+        if d_str not in chart_data_map:
+            chart_data_map[d_str] = 0
+        chart_data_map[d_str] += (o.amount or 0)
+
+    # Формируем массивы для Chart.js (сортируем по дате, чтобы график шел слева направо)
+    sorted_dates = sorted(chart_data_map.keys(), key=lambda x: datetime.strptime(x, "%d.%m"))
+    chart_labels = sorted_dates[-30:]  # берем только последние 30 дней, где были продажи
+    chart_revenue = [chart_data_map[d] for d in chart_labels]
 
     return render_template(
         "admin_sales.html",
         orders=orders,
         total_revenue=total_revenue,
         total_sales=total_sales,
-        sales_by_type=sales_by_type
+        sales_by_type=sales_by_type,
+        chart_labels=json.dumps(chart_labels),
+        chart_revenue=json.dumps(chart_revenue)
     )
+
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
     port = int(os.environ.get("PORT", 5000))

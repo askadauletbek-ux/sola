@@ -1,35 +1,30 @@
 {% extends 'base.html' %}
-{% block content %}
+{% block title %}Админ-панель | Kilogr.app{% endblock %}
 
+{% block content %}
 <script>
   window.__users = [
     {% for u in users %}
     {
       id: {{ u.id }},
-      name: {{ u.name|tojson }},
-      email: {{ u.email|tojson }},
-      avatar: {{ url_for('serve_file', filename=u.avatar.filename)|tojson if u.avatar else 'null' }},
+      name: {{ u.name|tojson|safe }},
+      email: {{ u.email|tojson|safe }},
+      avatar: {{ (url_for('serve_file', filename=u.avatar.filename) if u.avatar else '')|tojson|safe }},
       is_trainer: {{ 'true' if u.is_trainer else 'false' }},
-      has_subscription: {{ 'true' if u.has_subscription else 'false' }},
+      has_subscription: {{ 'true' if statuses.get(u.id, {}).get('subscription_active') else 'false' }},
       is_verified: {{ 'true' if u.is_verified else 'false' }},
       current_streak: {{ u.current_streak|default(0) }},
       squad_status: {{ u.squad_status|tojson|default('none') }},
-      owns_group: {{ 'true' if statuses.get(u.id, {}).get('owns_group') else 'false' }},
-      meal_today: {{ 'true' if statuses.get(u.id, {}).get('meal') else 'false' }},
-      activity_today: {{ 'true' if statuses.get(u.id, {}).get('activity') else 'false' }}
+      owns_group: {{ 'true' if statuses.get(u.id, {}).get('owns_group') else 'false' }}
     }{{ '' if loop.last else ',' }}
     {% endfor %}
   ];
-  window.__details = {{ details|tojson }};
+
   window.__urls = {
-    // detail оставляем как есть, так как там ID в конце URL, и replace работает (или просто работает конкатенация)
     detail: "{{ url_for('admin_user_detail', user_id=0) }}".replace(/0$/, ""),
     admin_applications_list: "{{ url_for('admin_applications_list') }}",
-
-    // ИСПРАВЛЕНИЕ: Используем уникальное число 999999 как метку для замены
     delete: "{{ url_for('admin_delete_user', user_id=999999) }}",
     magic: "{{ url_for('admin_send_magic_link', user_id=999999) }}",
-
     create: "{{ url_for('admin_create_user') }}",
     groups: "{{ url_for('admin_groups_list') }}",
     squads_dist: "{{ url_for('admin_squads_distribution') }}",
@@ -48,347 +43,278 @@
   };
 </script>
 
-<div class="max-w-7xl mx-auto px-4 py-8" x-data="adminPage()">
+<div class="min-h-screen bg-gray-50 pb-12" x-data="adminPage()">
 
-  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-    <div>
-        <h1 class="text-3xl font-bold text-gray-900">Пользователи</h1>
-        <p class="text-sm text-gray-500 mt-1">
-            Всего: <span x-text="rows.length" class="font-medium text-gray-900"></span> |
-            Фильтр: <span x-text="filtered.length" class="font-medium text-indigo-600"></span>
-        </p>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div>
+          <h1 class="text-3xl font-bold text-gray-900">Пользователи</h1>
+          <p class="text-sm text-gray-500 mt-1">
+              Всего в базе: <span class="font-medium text-gray-900">{{ stats.total_users if stats else '...' }}</span> |
+              На странице: <span x-text="filtered.length" class="font-medium text-indigo-600"></span>
+          </p>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+          <a :href="urls.create" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 shadow-sm transition">
+              ➕ Юзер
+          </a>
+          <a :href="urls.admin_applications_list" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 shadow-sm transition">
+              📝 Заявки
+          </a>
+
+          <div class="h-8 w-px bg-gray-300 mx-1"></div>
+
+          <button @click="squadModalOpen = true" class="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 shadow-sm transition">
+              🛡️ Создать Отряд
+          </button>
+          <a :href="urls.squads_list" class="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-900 shadow-sm transition">
+              👥 Все Отряды
+          </a>
+      </div>
     </div>
 
-    <div class="flex flex-wrap gap-2">
-        <a :href="urls.create" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 shadow-sm transition">
-            ➕ Юзер
-        </a>
-        <a :href="urls.admin_applications_list" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 shadow-sm transition">
-            📝 Заявки
-        </a>
+    {% if stats %}
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div class="text-xs text-gray-500 mb-1 uppercase tracking-wide">Всего юзеров</div>
+            <div class="text-2xl font-bold text-gray-900">{{ stats.total_users }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div class="text-xs text-gray-500 mb-1 uppercase tracking-wide">Подписки</div>
+            <div class="text-2xl font-bold text-blue-600">{{ stats.active_subs }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div class="text-xs text-gray-500 mb-1 uppercase tracking-wide">Тренеры</div>
+            <div class="text-2xl font-bold text-indigo-600">{{ stats.total_trainers }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div class="text-xs text-gray-500 mb-1 uppercase tracking-wide">Поели сегодня</div>
+            <div class="text-2xl font-bold text-green-600">{{ stats.meals_today }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div class="text-xs text-gray-500 mb-1 uppercase tracking-wide">Тренировки сегодня</div>
+            <div class="text-2xl font-bold text-orange-500">{{ stats.activity_today }}</div>
+        </div>
+    </div>
+    {% endif %}
 
-        <div class="h-8 w-px bg-gray-300 mx-1"></div>
-
-        <button @click="squadModalOpen = true" class="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 shadow-sm transition">
-            🛡️ Создать Отряд
-        </button>
-        <a :href="urls.squads_list" class="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-900 shadow-sm transition">
-            👥 Все Отряды
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+        <a :href="urls.analytics" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">📈</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">Аналитика</span>
+        </a>
+        <a :href="urls.squads_dist" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">⚔️</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">Распределение</span>
+        </a>
+        <a :href="urls.aiq" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">🤖</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">AI Очередь</span>
+        </a>
+        <a :href="urls.support" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">💬</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">Поддержка</span>
+        </a>
+        <a :href="urls.jobs" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">⏱</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">Cron Jobs</span>
+        </a>
+        <a :href="urls.sales" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-100 rounded-xl hover:border-emerald-300 hover:shadow-md transition group">
+            <span class="text-2xl group-hover:scale-110 transition">💰</span>
+            <span class="text-xs font-medium text-gray-600 mt-1">Продажи</span>
         </a>
     </div>
-  </div>
 
-  <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
-      <a :href="urls.analytics" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">📈</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Аналитика</span>
-      </a>
-      <a :href="urls.squads_dist" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">⚔️</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Распределение</span>
-      </a>
-      <a :href="urls.aiq" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">🤖</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">AI Очередь</span>
-      </a>
-      <a :href="urls.support" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">💬</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Поддержка</span>
-      </a>
-      <a :href="urls.jobs" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-indigo-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">⏱</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Cron Jobs</span>
-      </a>
-      <a :href="urls.sales" class="flex flex-col items-center justify-center p-3 bg-white border rounded-lg hover:border-emerald-300 hover:shadow-md transition group">
-          <span class="text-2xl group-hover:scale-110 transition">💰</span>
-          <span class="text-xs font-medium text-gray-600 mt-1">Продажи</span>
-      </a>
-  </div>
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <div class="md:col-span-6">
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Глобальный поиск (БД)</label>
+          <form method="GET" action="/admin" class="flex w-full">
+              <input type="text" name="search" value="{{ search or '' }}" placeholder="Email или Имя..."
+                     class="block w-full sm:text-sm border-gray-300 rounded-l-lg focus:ring-indigo-500 focus:border-indigo-500 border-r-0">
+              <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-r-lg hover:bg-indigo-700 font-medium text-sm">Искать</button>
+              {% if search %}
+                  <a href="/admin" class="ml-3 text-gray-500 hover:text-red-500 py-2 text-sm font-medium">Сбросить</a>
+              {% endif %}
+          </form>
+        </div>
 
-  <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
-    <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
-      <div class="md:col-span-4">
-        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Поиск</label>
-        <div class="relative">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            </div>
-            <input x-model.debounce.250ms="q" type="text" class="block w-full pl-10 sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" placeholder="Имя, email или ID">
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Фильтр подписки (На странице)</label>
+          <select x-model="filters.sub" class="block w-full sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+            <option value="any">Все на странице</option>
+            <option value="active">Только Premium</option>
+            <option value="none">Без подписки</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Роль (На странице)</label>
+          <select x-model="filters.trainer" class="block w-full sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+            <option value="any">Все</option>
+            <option value="yes">Тренеры</option>
+            <option value="no">Клиенты</option>
+          </select>
         </div>
       </div>
 
-      <div class="md:col-span-2">
-        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Подписка</label>
-        <select x-model="filters.sub" class="block w-full sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
-          <option value="any">Все</option>
-          <option value="active">Только активные</option>
-          <option value="none">Без подписки</option>
-        </select>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Роль</label>
-        <select x-model="filters.trainer" class="block w-full sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
-          <option value="any">Все</option>
-          <option value="yes">Тренеры</option>
-          <option value="no">Пользователи</option>
-        </select>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Сегодня</label>
-        <select x-model="filters.activity" class="block w-full sm:text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
-          <option value="any">Не важно</option>
-          <option value="ok">Активные (Еда/Шаги)</option>
-          <option value="no">Неактивные</option>
-        </select>
-      </div>
-
-      <div class="md:col-span-2 flex items-end">
-          <button @click="q=''; filters={sub:'any', trainer:'any', activity:'any'};" class="w-full px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50">
-              Сбросить
+      <div class="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-3" x-show="selected.size > 0" x-cloak x-transition>
+          <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Выбрано: <span x-text="selected.size"></span></span>
+          <button @click="notifyModalOpen = true" class="text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-sm transition">
+              🔔 Отправить PUSH
+          </button>
+          <div class="h-4 w-px bg-gray-300"></div>
+          <button @click="copyEmails()" class="text-sm text-gray-600 hover:text-indigo-600 flex items-center gap-1">
+              📋 Копировать Email
+          </button>
+          <button @click="exportCSV()" class="text-sm text-gray-600 hover:text-indigo-600 flex items-center gap-1">
+              ⬇ CSV Экспорт
+          </button>
+          <button @click="clearSelection()" class="text-sm text-red-500 hover:text-red-700 ml-auto font-medium">
+              Снять выделение
           </button>
       </div>
     </div>
 
-    <div class="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-3" x-show="selected.size > 0" x-transition>
-        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Выбрано: <span x-text="selected.size"></span></span>
-        <button @click="notifyModalOpen = true" class="text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-sm transition">
-            🔔 Отправить PUSH
-        </button>
-        <div class="h-4 w-px bg-gray-300"></div>
-        <button @click="copyEmails()" class="text-sm text-gray-600 hover:text-indigo-600 flex items-center gap-1">
-            📋 Копировать Email
-        </button>
-        <button @click="exportCSV()" class="text-sm text-gray-600 hover:text-indigo-600 flex items-center gap-1">
-            ⬇ CSV Экспорт
-        </button>
-        <button @click="clearSelection()" class="text-sm text-red-500 hover:text-red-700 ml-auto">
-            Отмена
-        </button>
-    </div>
-  </div>
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th scope="col" class="px-4 py-3 w-10">
+                <input type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" :checked="allOnPageSelected" @change="toggleSelectAllOnPage($event)">
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('name')">
+                Пользователь <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('name')"></span>
+              </th>
+              <th scope="col" class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('has_subscription')">
+                Статус <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('has_subscription')"></span>
+              </th>
+              <th scope="col" class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('current_streak')">
+                Squad / Стрик <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('current_streak')"></span>
+              </th>
+              <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Действия
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 bg-white">
+            <template x-for="row in pageRows" :key="row.id">
+              <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-4 whitespace-nowrap">
+                  <input type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" :checked="isSelected(row.id)" @change="toggleSelect(row.id)">
+                </td>
 
-  <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-    <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
-          <tr>
-            <th scope="col" class="px-4 py-3 w-10">
-              <input type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" :checked="allOnPageSelected" @change="toggleSelectAllOnPage($event)">
-            </th>
-            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('name')">
-              Пользователь <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('name')"></span>
-            </th>
-            <th scope="col" class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('has_subscription')">
-              Статус <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('has_subscription')"></span>
-            </th>
-            <th scope="col" class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Сегодня
-            </th>
-            <th scope="col" class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer group" @click="toggleSort('current_streak')">
-              Инфо <span class="text-gray-300 group-hover:text-gray-500" x-text="sortIcon('current_streak')"></span>
-            </th>
-            <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Действия
-            </th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-200 bg-white">
-          <template x-for="row in pageRows" :key="row.id">
-            <template x-if="true">
-                <tbody class="divide-y divide-gray-200">
-                    <tr class="hover:bg-gray-50 transition-colors" :class="{'bg-indigo-50/50': expanded === row.id}">
-                      <td class="px-4 py-4 whitespace-nowrap">
-                        <input type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" :checked="isSelected(row.id)" @change="toggleSelect(row.id)">
-                      </td>
-
-                      <td class="px-4 py-4 whitespace-nowrap">
-                        <div class="flex items-center">
-                          <div class="flex-shrink-0 h-10 w-10">
-                            <template x-if="row.avatar">
-                                <img class="h-10 w-10 rounded-full object-cover border border-gray-200" :src="row.avatar" alt="">
-                            </template>
-                            <template x-if="!row.avatar">
-                                <div class="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold text-sm" x-text="row.name.charAt(0)"></div>
-                            </template>
-                          </div>
-                          <div class="ml-4">
-                            <div class="text-sm font-medium text-gray-900 flex items-center gap-1">
-                                <a :href="urls.detail + row.id" class="hover:text-indigo-600 hover:underline" x-text="row.name"></a>
-                                <template x-if="row.is_verified">
-                                    <span title="Email подтвержден" class="text-blue-500">
-                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
-                                    </span>
-                                </template>
-                            </div>
-                            <div class="text-sm text-gray-500" x-text="row.email"></div>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td class="px-4 py-4 whitespace-nowrap text-center">
-                        <div class="flex flex-col items-center gap-1">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
-                                :class="row.has_subscription ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
-                                x-text="row.has_subscription ? 'Premium' : 'Free'">
-                            </span>
-                            <template x-if="row.is_trainer">
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-indigo-100 text-indigo-800">
-                                    Тренер
-                                </span>
-                            </template>
-                        </div>
-                      </td>
-
-                      <td class="px-4 py-4 whitespace-nowrap text-center">
-                          <div class="flex justify-center gap-2">
-                              <span class="flex items-center gap-1 px-2 py-1 rounded text-xs border"
-                                    :class="row.meal_today ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-400 opacity-50'">
-                                  <span>🥗</span>
-                                  <span x-text="row.meal_today ? 'Да' : ''"></span>
+                <td class="px-4 py-4 whitespace-nowrap">
+                  <div class="flex items-center">
+                    <div class="flex-shrink-0 h-10 w-10">
+                      <template x-if="row.avatar">
+                          <img class="h-10 w-10 rounded-full object-cover border border-gray-200" :src="row.avatar" alt="">
+                      </template>
+                      <template x-if="!row.avatar">
+                          <div class="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold text-sm" x-text="row.name ? row.name.charAt(0).toUpperCase() : 'U'"></div>
+                      </template>
+                    </div>
+                    <div class="ml-4">
+                      <div class="text-sm font-medium text-gray-900 flex items-center gap-1">
+                          <a :href="urls.detail + row.id" class="hover:text-indigo-600 hover:underline" x-text="row.name || 'Без имени'"></a>
+                          <template x-if="row.is_verified">
+                              <span title="Email подтвержден" class="text-blue-500">
+                                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
                               </span>
-                              <span class="flex items-center gap-1 px-2 py-1 rounded text-xs border"
-                                    :class="row.activity_today ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-400 opacity-50'">
-                                  <span>👣</span>
-                                  <span x-text="row.activity_today ? 'Да' : ''"></span>
-                              </span>
-                          </div>
-                      </td>
+                          </template>
+                      </div>
+                      <div class="text-sm text-gray-500" x-text="row.email"></div>
+                    </div>
+                  </div>
+                </td>
 
-                      <td class="px-4 py-4 whitespace-nowrap text-center">
-                          <div class="text-sm text-gray-900 font-medium">
-                              <span x-show="row.current_streak > 0">🔥 <span x-text="row.current_streak"></span> дн.</span>
-                              <span x-show="row.current_streak === 0" class="text-gray-400">—</span>
-                          </div>
-                          <div class="text-xs text-gray-500 mt-0.5">
-                              <span x-show="row.squad_status !== 'none'">Squad: <span x-text="row.squad_status"></span></span>
-                          </div>
-                      </td>
+                <td class="px-4 py-4 whitespace-nowrap text-center">
+                  <div class="flex flex-col items-center gap-1">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                          :class="row.has_subscription ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                          x-text="row.has_subscription ? 'Premium' : 'Free'">
+                      </span>
+                      <template x-if="row.is_trainer">
+                          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-indigo-100 text-indigo-800">
+                              Тренер
+                          </span>
+                      </template>
+                  </div>
+                </td>
 
-                      <td class="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div class="flex justify-end items-center gap-2">
-                            <button @click="sendMagic(row.id)" title="Отправить ссылку для входа" class="text-gray-400 hover:text-indigo-600 transition">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11.536 19.464a6 6 0 01-1.414 0l-.707-.707a1 1 0 010-1.414l.707-.707a1 1 0 011.414 0L13.172 15.172a4 4 0 015.656-5.656zM9 10a.5.5 0 010-1h1v1H9zm1-2a.5.5 0 01.5-.5h.5v.5H10V8zm3 1a.5.5 0 01-.5.5h-.5v-.5H13V9z"/></svg>
-                            </button>
-                            <a :href="urls.detail + row.id" title="Редактировать / Детали" class="text-gray-400 hover:text-blue-600 transition">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                            </a>
-                            <button @click="toggleExpand(row.id)" title="Быстрый просмотр" class="text-gray-400 hover:text-gray-700 transition">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" :class="{'rotate-180': expanded === row.id}"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                            </button>
-                        </div>
-                      </td>
-                    </tr>
+                <td class="px-4 py-4 whitespace-nowrap text-center">
+                    <div class="text-sm text-gray-900 font-medium">
+                        <span x-show="row.current_streak > 0">🔥 <span x-text="row.current_streak"></span> дн.</span>
+                        <span x-show="row.current_streak === 0" class="text-gray-400">—</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                        <span x-show="row.squad_status !== 'none'">Squad: <span x-text="row.squad_status"></span></span>
+                    </div>
+                </td>
 
-                    <tr x-show="expanded === row.id" x-cloak class="bg-gray-50 border-b border-gray-200">
-                        <td colspan="6" class="px-4 py-6">
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6" x-data="{ d: getDetail(row.id) }">
-                                <div class="col-span-1 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-                                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Питание сегодня</h4>
-                                    <template x-if="(d.meals||[]).length">
-                                        <div class="space-y-2">
-                                            <template x-for="m in d.meals" :key="m.type">
-                                                <div class="flex justify-between items-center text-sm">
-                                                    <span class="capitalize text-gray-700 font-medium" x-text="m.type"></span>
-                                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-gray-600" x-text="m.cal + ' ккал'"></span>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </template>
-                                    <template x-if="!(d.meals||[]).length">
-                                        <p class="text-sm text-gray-400 italic">Нет записей</p>
-                                    </template>
-                                </div>
-
-                                <div class="col-span-1 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-                                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Активность</h4>
-                                    <template x-if="d.activity && d.activity.steps !== null">
-                                        <div class="grid grid-cols-2 gap-4 text-center">
-                                            <div>
-                                                <div class="text-xl font-bold text-gray-800" x-text="d.activity.steps"></div>
-                                                <div class="text-xs text-gray-500">Шаги</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-xl font-bold text-gray-800" x-text="d.activity.active_kcal"></div>
-                                                <div class="text-xs text-gray-500">Ккал</div>
-                                            </div>
-                                        </div>
-                                    </template>
-                                    <template x-if="!d.activity || d.activity.steps === null">
-                                        <p class="text-sm text-gray-400 italic">Нет активности</p>
-                                    </template>
-                                </div>
-
-                                <div class="col-span-1 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-                                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Последний замер</h4>
-                                    <template x-if="(d.metrics||[]).length">
-                                        <div class="flex flex-wrap gap-2">
-                                            <template x-for="m in d.metrics" :key="m.label">
-                                                <div class="bg-gray-50 px-2 py-1 rounded text-xs text-gray-700 border border-gray-200">
-                                                    <span x-text="m.label"></span>: <span class="font-bold" x-text="m.cur"></span>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </template>
-                                    <template x-if="!(d.metrics||[]).length">
-                                        <p class="text-sm text-gray-400 italic">Нет данных</p>
-                                    </template>
-                                </div>
-                            </div>
-                            <div class="mt-4 flex justify-end">
-                                <button @click="deleteUser(row.id, row.name)" class="text-xs text-red-500 hover:text-red-700 hover:underline">
-                                    Удалить пользователя
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
+                <td class="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div class="flex justify-end items-center gap-2">
+                      <button @click="sendMagic(row.id)" title="Отправить магическую ссылку" class="text-purple-600 hover:text-purple-900 bg-purple-50 px-2 py-1 rounded transition">
+                          Войти
+                      </button>
+                      <a :href="urls.detail + row.id" class="text-blue-600 hover:text-blue-900 bg-blue-50 px-2 py-1 rounded transition">
+                          Детали
+                      </a>
+                      <button @click="deleteUser(row.id, row.name)" title="Удалить" class="text-red-500 hover:text-red-700 p-1">
+                          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      </button>
+                  </div>
+                </td>
+              </tr>
             </template>
-          </template>
 
-          <tr x-show="!pageRows.length">
-            <td colspan="6" class="px-6 py-10 text-center text-gray-500">
-                <div class="flex flex-col items-center">
-                    <span class="text-3xl mb-2">🔍</span>
-                    <span>Ничего не найдено</span>
-                </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+            <tr x-show="!pageRows.length">
+              <td colspan="5" class="px-6 py-10 text-center text-gray-500">
+                  <div class="flex flex-col items-center">
+                      <span class="text-3xl mb-2">🔍</span>
+                      <span>Ничего не найдено на этой странице</span>
+                  </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-    <div class="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between sm:px-6">
-        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-            <div>
-                <p class="text-sm text-gray-700">
-                    Показано <span class="font-medium" x-text="pageStart + 1"></span> - <span class="font-medium" x-text="Math.min(pageEnd, filtered.length)"></span> из <span class="font-medium" x-text="filtered.length"></span>
-                </p>
-            </div>
-            <div>
-                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
-                    <button @click="page=1" :disabled="page===1" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                        &laquo;
-                    </button>
-                    <button @click="page--" :disabled="page===1" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                        Назад
-                    </button>
-                    <button @click="page++" :disabled="page===pageCount" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                        Вперед
-                    </button>
-                    <button @click="page=pageCount" :disabled="page===pageCount" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                        &raquo;
-                    </button>
-                </nav>
-            </div>
-        </div>
+      {% if pagination and pagination.pages > 1 %}
+      <div class="bg-gray-50 px-4 py-3 border-t border-gray-200 flex items-center justify-between sm:px-6">
+          <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                  <p class="text-sm text-gray-700">
+                      Страница <span class="font-medium">{{ pagination.page }}</span> из <span class="font-medium">{{ pagination.pages }}</span>
+                  </p>
+              </div>
+              <div>
+                  <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                      {% if pagination.has_prev %}
+                          <a href="{{ url_for('admin_dashboard', page=pagination.prev_num, search=search) }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-l-md">Назад</a>
+                      {% else %}
+                          <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-gray-100 text-sm font-medium text-gray-400 cursor-not-allowed rounded-l-md">Назад</span>
+                      {% endif %}
+
+                      {% if pagination.has_next %}
+                          <a href="{{ url_for('admin_dashboard', page=pagination.next_num, search=search) }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-r-md">Вперед</a>
+                      {% else %}
+                          <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-gray-100 text-sm font-medium text-gray-400 cursor-not-allowed rounded-r-md">Вперед</span>
+                      {% endif %}
+                  </nav>
+              </div>
+          </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 
   <div x-show="squadModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
     <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="squadModalOpen = false"></div>
+        <div class="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" @click="squadModalOpen = false"></div>
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
         <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
             <form :action="urls.squad_create" method="POST">
@@ -406,7 +332,7 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Назначить тренера</label>
                             <select name="trainer_id" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-orange-500 focus:border-orange-500 sm:text-sm">
-                                <option value="">Выберите пользователя...</option>
+                                <option value="">Выберите пользователя (из текущего списка)</option>
                                 <template x-for="u in rows" :key="u.id">
                                     <option :value="u.id"
                                             :disabled="u.owns_group"
@@ -432,12 +358,12 @@
 
   <div x-show="notifyModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
     <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="notifyModalOpen = false"></div>
+        <div class="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" @click="notifyModalOpen = false"></div>
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
         <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
             <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                 <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">Отправить PUSH уведомление</h3>
-                <p class="text-sm text-gray-500 mb-4">Выбрано пользователей: <span x-text="selected.size"></span></p>
+                <p class="text-sm text-gray-500 mb-4">Выбрано пользователей: <span x-text="selected.size" class="font-bold"></span></p>
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Заголовок</label>
@@ -447,25 +373,11 @@
                         <label class="block text-sm font-medium text-gray-700">Текст</label>
                         <textarea x-model="notifBody" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">URL изображения (опционально)</label>
-                        <input type="text" x-model="notifImageUrl" placeholder="https://example.com/image.png" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Цвет текста</label>
-                            <input type="color" x-model="notifTextColor" class="mt-1 block w-full h-10 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer p-0.5">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Цвет панели</label>
-                            <input type="color" x-model="notifBgColor" class="mt-1 block w-full h-10 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer p-0.5">
-                        </div>
-                    </div>
                 </div>
             </div>
             <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                 <button @click="sendNotification()" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
-                    Отправить
+                    Отправить PUSH
                 </button>
                 <button @click="notifyModalOpen = false" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
                     Отмена
@@ -481,28 +393,21 @@
 function adminPage(){
   return {
     rows: window.__users || [],
-    details: window.__details || {},
     urls: window.__urls || {},
-    q: '',
-    filters: { sub: 'any', trainer: 'any', activity: 'any' },
+    filters: { sub: 'any', trainer: 'any' },
     sortKey: 'id',
     sortDir: 'desc',
-    page: 1,
-    pageSize: 20,
     selected: new Set(),
-    expanded: null,
+
     squadModalOpen: false,
     notifyModalOpen: false,
     notifTitle: '',
     notifBody: '',
-    notifImageUrl: '',
-    notifTextColor: '#000000',
-    notifBgColor: '#ffffff',
 
-    norm(s){ return (s||'').toString().toLowerCase().trim(); },
     isSelected(id){ return this.selected.has(id); },
     toggleSelect(id){ this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id); },
     clearSelection(){ this.selected.clear(); },
+
     toggleSelectAllOnPage(e){
       const check = e.target.checked;
       this.pageRows.forEach(r => check ? this.selected.add(r.id) : this.selected.delete(r.id));
@@ -511,6 +416,7 @@ function adminPage(){
       if(!this.pageRows.length) return false;
       return this.pageRows.every(r => this.selected.has(r.id));
     },
+
     sortIcon(key){
       if(this.sortKey!==key) return '↕';
       return this.sortDir==='asc' ? '▲' : '▼';
@@ -518,10 +424,6 @@ function adminPage(){
     toggleSort(key){
       if(this.sortKey===key){ this.sortDir = this.sortDir==='asc' ? 'desc' : 'asc'; }
       else { this.sortKey = key; this.sortDir = 'asc'; }
-    },
-    toggleExpand(id){ this.expanded = (this.expanded===id ? null : id); },
-    getDetail(id){
-      return this.details[id] || this.details[String(id)] || { meals: [], activity: null, metrics: [] };
     },
 
     passesFilters(r){
@@ -533,16 +435,7 @@ function adminPage(){
         const need = this.filters.trainer === 'yes';
         if(r.is_trainer !== need) return false;
       }
-      if(this.filters.activity !== 'any'){
-        const hasSome = r.meal_today || r.activity_today;
-        if(this.filters.activity === 'ok' && !hasSome) return false;
-        if(this.filters.activity === 'no' && hasSome) return false;
-      }
-
-      const q = this.norm(this.q);
-      if(!q) return true;
-      const hay = `${r.id} ${this.norm(r.name)} ${this.norm(r.email)}`;
-      return hay.includes(q);
+      return true;
     },
     get filtered(){
       const out = this.rows.filter(r => this.passesFilters(r));
@@ -558,27 +451,25 @@ function adminPage(){
       return out;
     },
 
-    get pageCount(){ return Math.max(1, Math.ceil(this.filtered.length / this.pageSize)); },
-    get pageStart(){ return (this.page-1)*this.pageSize; },
-    get pageEnd(){ return this.pageStart + this.pageSize; },
     get pageRows(){
-      if(this.page > this.pageCount) this.page = this.pageCount;
-      return this.filtered.slice(this.pageStart, this.pageEnd);
+      // Так как пагинация теперь идет через Flask, Alpine просто сортирует текущую выдачу
+      return this.filtered;
     },
 
     copyEmails(){
       const list = (this.selected.size ? this.rows.filter(r=>this.selected.has(r.id)) : this.filtered).map(r=>r.email);
       if(!list.length) return;
       navigator.clipboard.writeText(list.join(', '))
-        .then(()=>alert('Email’ы скопированы'))
+        .then(()=>alert('Email скопированы'))
         .catch(()=>alert('Не удалось скопировать'));
     },
+
     exportCSV(){
       const data = (this.selected.size ? this.rows.filter(r=>this.selected.has(r.id)) : this.filtered);
       if(!data.length) return;
-      const header = ['id','name','email','is_trainer','has_subscription','meal_today','activity_today'];
+      const header = ['id','name','email','is_trainer','has_subscription'];
       const lines = [header.join(',')].concat(
-        data.map(r => [r.id, r.name, r.email, r.is_trainer, r.has_subscription, r.meal_today, r.activity_today]
+        data.map(r => [r.id, r.name, r.email, r.is_trainer, r.has_subscription]
           .map(v => `"${String(v).replaceAll('"','""')}"`).join(','))
       );
       const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
@@ -593,16 +484,15 @@ function adminPage(){
       if(!confirm(`Удалить пользователя ${name}? Это действие необратимо.`)) return;
       const f = document.createElement('form');
       f.method = 'POST';
-      // ИСПРАВЛЕНИЕ: Заменяем 999999 на реальный ID
       f.action = this.urls.delete.replace('999999', id);
       document.body.appendChild(f);
       f.submit();
     },
+
     sendMagic(id){
       if(!confirm('Отправить магическую ссылку для входа?')) return;
       const f = document.createElement('form');
       f.method = 'POST';
-      // ИСПРАВЛЕНИЕ: Заменяем 999999 на реальный ID
       f.action = this.urls.magic.replace('999999', id);
       document.body.appendChild(f);
       f.submit();
@@ -614,11 +504,9 @@ function adminPage(){
             return;
         }
         const userIds = Array.from(this.selected);
-        if (userIds.length === 0) {
-            alert('Нет выбранных пользователей');
-            return;
-        }
-        if(!confirm(`Отправить уведомление ${userIds.length} пользователям?`)) return;
+        if (userIds.length === 0) return;
+
+        if(!confirm(`Отправить PUSH-уведомление ${userIds.length} пользователям?`)) return;
 
         try {
             const res = await fetch(this.urls.notify_send, {
@@ -627,10 +515,7 @@ function adminPage(){
                 body: JSON.stringify({
                     user_ids: userIds,
                     title: this.notifTitle,
-                    body: this.notifBody,
-                    image_url: this.notifImageUrl,
-                    text_color: this.notifTextColor,
-                    bg_color: this.notifBgColor
+                    body: this.notifBody
                 })
             });
             const data = await res.json();
@@ -639,9 +524,6 @@ function adminPage(){
                 this.notifyModalOpen = false;
                 this.notifTitle = '';
                 this.notifBody = '';
-                this.notifImageUrl = '';
-                this.notifTextColor = '#000000';
-                this.notifBgColor = '#ffffff';
                 this.clearSelection();
             } else {
                 alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
