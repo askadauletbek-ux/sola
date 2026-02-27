@@ -2068,6 +2068,10 @@ def api_register_google():
         if ext in {'jpg', 'jpeg', 'png', 'webp'}:
             unique_filename = f"avatar_reg_{uuid.uuid4().hex}.{ext}"
             file_data = file.read()
+
+            if not is_image_safe(file_data):
+                return jsonify({"ok": False, "errors": ["Изображение содержит недопустимый контент."]}), 400
+
             new_file = UploadedFile(
                 filename=unique_filename,
                 content_type=file.mimetype,
@@ -2194,6 +2198,10 @@ def api_register_apple():
         if ext in {'jpg', 'jpeg', 'png', 'webp'}:
             unique_filename = f"avatar_apple_{uuid.uuid4().hex}.{ext}"
             file_data = file.read()
+
+            if not is_image_safe(file_data):
+                return jsonify({"ok": False, "errors": ["Изображение содержит недопустимый контент."]}), 400
+
             new_file = UploadedFile(
                 filename=unique_filename,
                 content_type=file.mimetype,
@@ -2995,6 +3003,10 @@ def register():
             if ext in {'jpg', 'jpeg', 'png', 'webp'}:
                 unique_filename = f"avatar_{uuid.uuid4().hex}.{ext}"
                 file_data = file.read()
+
+                if not is_image_safe(file_data):
+                    errors.append("Изображение содержит недопустимый контент. Выберите другое фото.")
+                    return render_template('register.html', errors=errors)
 
                 new_file = UploadedFile(
                     filename=unique_filename,
