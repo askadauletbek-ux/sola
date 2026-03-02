@@ -21,6 +21,8 @@ from openai import OpenAI
 from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import subqueryload
 from sqlalchemy.exc import IntegrityError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from flask import (
     Flask,
@@ -88,10 +90,19 @@ load_dotenv()
 # Инициализация Amplitude
 amplitude = Amplitude(api_key=os.getenv("AMPLITUDE_API_KEY", "c9572b73ece4f73786a764fa197c2161"))
 
+
 app = Flask(__name__)
+
+# Настройка лимитов (базовое хранение в памяти)
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["5000 per day", "500 per hour"],
+    storage_uri="memory://"
+)
+
 app.secret_key = os.getenv("SECRET_KEY", "supersecret")
 app.jinja_env.globals.update(getattr=getattr)
-
 # Config DB — задаём ДО init_app
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "sqlite:///35healthclubs.db")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -107,7 +118,7 @@ from models import (
     # --- ДОБАВИТЬ ЭТИ МОДЕЛИ: ---
     Notification, BodyVisualization, SubscriptionApplication, EmailVerification,
     SquadScoreLog, SupportTicket, SupportMessage, DietPreference, StagedDiet,
-    ShoppingCart, ShoppingCartItem
+    ShoppingCart, ShoppingCartItem, Achievement
 )
 from achievements_engine import check_all_achievements, ACHIEVEMENTS_METADATA
 
@@ -478,306 +489,288 @@ def _send_mobile_push(fcm_token: str, title: str, body: str, data: dict = None):
         return False
 
 
-_notifier_started = False
 def _notification_worker():
-    # ВАЖНО: весь цикл работает внутри контекста приложения
+    # ВАЖНО: функция теперь отрабатывает 1 раз (без while True)
     with app.app_context():
-        while True:
+        try:
+            # --- ВРЕМЯ АЛМАТЫ ---
+            # Используем явную таймзону, чтобы не зависеть от времени сервера
+            now = datetime.now(ZoneInfo("Asia/Almaty"))
+            now_d = now.date()
+            target = now + timedelta(hours=1)
+
+            # ⛔️ Деактивируем просроченные подписки (end_date < today)
             try:
-                # --- ВРЕМЯ АЛМАТЫ ---
-                # Используем явную таймзону, чтобы не зависеть от времени сервера
-                now = datetime.now(ZoneInfo("Asia/Almaty"))
-                now_d = now.date()
-                target = now + timedelta(hours=1)
-
-                # ⛔️ Деактивируем просроченные подписки (end_date < today)
-                try:
-                    db.session.query(Subscription).filter(
-                        Subscription.status == 'active',
-                        Subscription.end_date.isnot(None),
-                        Subscription.end_date < now_d
-                    ).update({"status": "inactive"}, synchronize_session=False)
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-
-                # 1) Напоминания за 1 час (как было)
-                trainings = Training.query.filter(
-                    Training.date == target.date(),
-                    func.extract('hour', Training.start_time) == target.hour,
-                    func.extract('minute', Training.start_time) == target.minute
-                ).all()
-
-                for t in trainings:
-                    # СЦЕНАРИЙ 1: Групповая тренировка (уведомляем ВСЕХ участников)
-                    if t.group_id is not None:
-                        if not t.group_notified_1h:
-                            # Берем всех участников группы
-                            members = GroupMember.query.filter_by(group_id=t.group_id).all()
-
-                            # Также добавляем тренера, если он не участник, чтобы он тоже знал
-                            recipients_ids = {m.user_id for m in members}
-                            if t.trainer_id:
-                                recipients_ids.add(t.trainer_id)
-
-                            for uid in recipients_ids:
-                                u = db.session.get(User, uid)
-                                if not u: continue
-
-                                # Проверка настроек юзера (общая)
-                                settings = get_effective_user_settings(u)
-                                if not settings.notify_trainings: continue
-
-                                from notification_service import send_user_notification
-                                send_user_notification(
-                                    user_id=u.id,
-                                    title="⏰ Скоро тренировка!",
-                                    body=f"Команда собирается через час: «{t.title}». Не опаздывайте!",
-                                    type='reminder',
-                                    data={"training_id": str(t.id), "route": "/squad"}  # Ведем в сквад
-                                )
-
-                            # Помечаем тренировку как "оповещенную"
-                            t.group_notified_1h = True
-
-                    # СЦЕНАРИЙ 2: Публичная тренировка (по старой логике Signups)
-                    else:
-                        rows = TrainingSignup.query.filter_by(training_id=t.id, notified_1h=False).all()
-                        for s in rows:
-                            u = db.session.get(User, s.user_id)
-
-                            # --- 1. Проверяем ОБЩИЕ настройки ---
-                            if (not u or not getattr(u, "telegram_notify_enabled", True)  # (Оставляем старую настройку)
-                                    or not getattr(u, "notify_trainings", True)):
-                                s.notified_1h = True  # Помечаем, чтобы не спамить
-                                continue
-
-                            # --- 2. Формируем контент для PUSH ---
-                            when = t.start_time.strftime("%H:%M")
-                            date_s = t.date.strftime("%d.%m.%Y")
-                            title = "⏰ Напоминание о тренировке!"
-                            body = (
-                                f"Через 1 час: «{t.title or 'Онлайн-тренировка'}» с "
-                                f"{(t.trainer.name if t.trainer and getattr(t.trainer, 'name', None) else 'тренером')} в {when}."
-                            )
-
-                            # --- 3. Отправляем уведомление (БД + PUSH) ---
-                            # Импорт внутри функции для избежания циклических ссылок
-                            from notification_service import send_user_notification
-
-                            sent_mobile = send_user_notification(
-                                user_id=u.id,
-                                title=title,
-                                body=body,
-                                type='reminder',
-                                data={"training_id": str(t.id), "route": "/calendar"}
-                            )
-                            # Fallback на Telegram ПОЛНОСТЬЮ УБРАН
-
-                            # --- 4. Помечаем как "уведомлено" ---
-                            if sent_mobile:
-                                s.notified_1h = True
-                startings = Training.query.filter(
-                    Training.date == now.date(),
-                    func.extract('hour', Training.start_time) == now.hour,
-                    func.extract('minute', Training.start_time) == now.minute
-                ).all()
-
-                for t in startings:
-                    # СЦЕНАРИЙ 1: Групповая
-                    if t.group_id is not None:
-                        if not t.group_notified_start:
-                            members = GroupMember.query.filter_by(group_id=t.group_id).all()
-                            recipients_ids = {m.user_id for m in members}
-                            if t.trainer_id: recipients_ids.add(t.trainer_id)
-
-                            for uid in recipients_ids:
-                                u = db.session.get(User, uid)
-                                if not u: continue
-                                settings = get_effective_user_settings(u)
-                                if not settings.notify_trainings: continue
-
-                                from notification_service import send_user_notification
-                                send_user_notification(
-                                    user_id=u.id,
-                                    title="🚀 Тренировка началась!",
-                                    body=f"Заходите в видео-чат: «{t.title}».",
-                                    type='info',
-                                    data={"training_id": str(t.id), "route": "/squad"}
-                                )
-                            t.group_notified_start = True
-
-                    # СЦЕНАРИЙ 2: Публичная
-                    else:
-                        rows = TrainingSignup.query.filter_by(training_id=t.id).all()
-                        for s in rows:
-                            # пропускаем, если уже отмечали старт
-                            if getattr(s, "notified_start", False):
-                                continue
-                            u = db.session.get(User, s.user_id)
-
-                            # --- 1. Проверяем ОБЩИЕ настройки ---
-                            if (not u or not getattr(u, "telegram_notify_enabled", True)
-                                    or not getattr(u, "notify_trainings", True)):
-                                s.notified_start = True  # Помечаем, чтобы не спамить
-                                continue
-
-                            # --- 2. Формируем контент для PUSH ---
-                            when = t.start_time.strftime("%H:%M")
-                            date_s = t.date.strftime("%d.%m.%Y")
-                            title = "🏁 Тренировка начинается!"
-                            body = f"«{t.title or 'Онлайн-тренировка'}» началась. Тренер: {(t.trainer.name if t.trainer and getattr(t.trainer, 'name', None) else 'тренер')}."
-
-                            # --- 3. Отправляем уведомление (БД + PUSH) ---
-                            from notification_service import send_user_notification
-
-                            sent_mobile = send_user_notification(
-                                user_id=u.id,
-                                title=title,
-                                body=body,
-                                type='info',
-                                data={"training_id": str(t.id), "route": "/calendar"}
-                            )
-
-                            # Fallback на Telegram ПОЛНОСТЬЮ УБРАН
-
-                            # --- 4. Помечаем как "уведомлено" ---
-                            if sent_mobile:
-                                s.notified_start = True
-
-                                # Получаем только тех пользователей, у которых активна подписка
-                                users = User.query.join(Subscription).filter(
-                                    Subscription.status == 'active',
-                                    Subscription.end_date.isnot(None)
-                                ).all()
-
-                                for u in users:
-                                    sub = u.subscription
-                                    days_left = (sub.end_date - now_d).days
-
-                                    # --- ИЗМЕНЕНИЕ: Проверяем fcm_token и настройки ---
-                                    fcm_token = getattr(u, "fcm_device_token", None)
-                                    settings = get_effective_user_settings(u)
-
-                                    if days_left == 5 and not u.renewal_telegram_sent and fcm_token and settings.notify_subscription:
-                                          try:
-                            # ссылка на продление
-                                              base = os.getenv("APP_BASE_URL", "").rstrip("/")
-                                              purchase_path = url_for("purchase_page") if app and app.app_context else "/purchase"
-                                              link = f"{base}{purchase_path}" if base else purchase_path
-
-                                              title = "⏳ Подписка истекает"
-                                              body = "Осталось 5 дней. Не теряйте доступ к тренировкам — продлите сейчас."
-
-                                              # --- ИЗМЕНЕНИЕ: Отправляем уведомление (БД + PUSH) ---
-                                              from notification_service import send_user_notification
-
-                                              if send_user_notification(
-                                                      user_id=u.id,
-                                                      title=title,
-                                                      body=body,
-                                                      type='warning',
-                                                      data={"route": "/purchase"}
-                                              ):
-                                                  u.renewal_telegram_sent = True
-                                          except Exception:
-                                              pass
-
-                if now.minute == 0 and now.hour == 10:
-                    two_weeks_ago = now_d - timedelta(days=14)
-
-                    # --- ИЗМЕНЕНИЕ: Ищем пользователей с FCM токеном ---
-                    users_to_remind = User.query.filter(User.fcm_device_token.isnot(None)).all()
-
-                    for u in users_to_remind:
-                        # Проверяем настройки уведомлений пользователя
-                        settings = get_effective_user_settings(u)
-
-                        # --- ИЗМЕНЕНИЕ: Проверяем общие PUSH-настройки (можно заменить на спец. настройку) ---
-                        if not settings.notify_meals:  # (Используем notify_meals как общий флаг для ЗОЖ)
-                            continue
-
-                        # Найти последний замер пользователя
-                        latest_analysis = BodyAnalysis.query.filter_by(user_id=u.id).order_by(
-                            BodyAnalysis.timestamp.desc()).first()
-
-                        if latest_analysis:
-                            # Проверяем, прошло ли 14 дней с последнего замера
-                            if latest_analysis.timestamp.date() <= two_weeks_ago:
-                                # Проверяем, не отправляли ли мы уже напоминание в последние 13 дней
-                                if u.last_measurement_reminder_sent_at is None or \
-                                        (now - u.last_measurement_reminder_sent_at).days >= 14:
-
-                                    # --- ИЗМЕНЕНИЕ: Отправляем уведомление (БД + PUSH) ---
-                                    from notification_service import send_user_notification
-
-                                    title = "⏰ Пора сделать замер!"
-                                    body = f"Привет, {u.name}! Прошло 2 недели с последнего замера. Пора обновить данные."
-
-                                    if send_user_notification(
-                                            user_id=u.id,
-                                            title=title,
-                                            body=body,
-                                            type='info',
-                                            data={"route": "/profile"}  # Открываем профиль для замера
-                                    ):
-                                        u.last_measurement_reminder_sent_at = now
-                                        db.session.commit()
-
-                                        # --- ЕЖЕНЕДЕЛЬНЫЕ ИТОГИ (Понедельник 09:00 Алматы) ---
-                                    if now.weekday() == 0 and now.hour == 9 and now.minute == 0:
-                                        # 1. Определяем даты прошлой недели (Пн-Вс)
-                                        today_date = now.date()
-                                        start_of_last_week = today_date - timedelta(days=7)
-                                        end_of_last_week = today_date - timedelta(days=1)
-
-                                        # 2. Проходим по всем группам
-                                        groups = Group.query.all()
-                                        for group in groups:
-                                            # Считаем очки за прошлую неделю
-                                            scores = db.session.query(
-                                                SquadScoreLog.user_id,
-                                                func.sum(SquadScoreLog.points).label('total')
-                                            ).filter(
-                                                SquadScoreLog.group_id == group.id,
-                                                func.date(SquadScoreLog.created_at) >= start_of_last_week,
-                                                func.date(SquadScoreLog.created_at) <= end_of_last_week
-                                            ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
-
-                                            # 3. Рассылаем уведомления Топ-3
-                                            for rank, (uid, score) in enumerate(scores[:3]):
-                                                place = rank + 1
-                                                medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-
-                                                title_msg = f"Итоги недели: {place} место! {medals.get(place, '')}"
-                                                body_msg = f"Так держать! Вы набрали {score} баллов и заняли {place} место в отряде {group.name}."
-
-                                                from notification_service import send_user_notification
-                                                send_user_notification(
-                                                    user_id=uid,
-                                                    title=title_msg,
-                                                    body=body_msg,
-                                                    type='success',
-                                                    data={"route": "/squad", "args": "stories"}  # Откроет сторис
-                                                )
-
-                                            # Уведомление для остальных (чтобы зашли посмотреть сторис)
-                                            for uid, score in scores[3:]:
-                                                from notification_service import send_user_notification
-                                                send_user_notification(
-                                                    user_id=uid,
-                                                    title="Итоги недели подведены 📊",
-                                                    body=f"Посмотрите результаты битвы в отряде {group.name}!",
-                                                    type='info',
-                                                    data={"route": "/squad", "args": "stories"}
-                                                )
-
+                db.session.query(Subscription).filter(
+                    Subscription.status == 'active',
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date < now_d
+                ).update({"status": "inactive"}, synchronize_session=False)
                 db.session.commit()
             except Exception:
                 db.session.rollback()
-            finally:
-                db.session.remove()
-                time_mod.sleep(60)
+
+            # 1) Напоминания за 1 час (как было)
+            trainings = Training.query.filter(
+                Training.date == target.date(),
+                func.extract('hour', Training.start_time) == target.hour,
+                func.extract('minute', Training.start_time) == target.minute
+            ).all()
+
+            for t in trainings:
+                # СЦЕНАРИЙ 1: Групповая тренировка (уведомляем ВСЕХ участников)
+                if t.group_id is not None:
+                    if not t.group_notified_1h:
+                        # Берем всех участников группы
+                        members = GroupMember.query.filter_by(group_id=t.group_id).all()
+
+                        # Также добавляем тренера, если он не участник, чтобы он тоже знал
+                        recipients_ids = {m.user_id for m in members}
+                        if t.trainer_id:
+                            recipients_ids.add(t.trainer_id)
+
+                        for uid in recipients_ids:
+                            u = db.session.get(User, uid)
+                            if not u: continue
+
+                            # Проверка настроек юзера (общая)
+                            settings = get_effective_user_settings(u)
+                            if not settings.notify_trainings: continue
+
+                            from notification_service import send_user_notification
+                            send_user_notification(
+                                user_id=u.id,
+                                title="⏰ Скоро тренировка!",
+                                body=f"Команда собирается через час: «{t.title}». Не опаздывайте!",
+                                type='reminder',
+                                data={"training_id": str(t.id), "route": "/squad"}  # Ведем в сквад
+                            )
+
+                        # Помечаем тренировку как "оповещенную"
+                        t.group_notified_1h = True
+
+                # СЦЕНАРИЙ 2: Публичная тренировка (по старой логике Signups)
+                else:
+                    rows = TrainingSignup.query.filter_by(training_id=t.id, notified_1h=False).all()
+                    for s in rows:
+                        u = db.session.get(User, s.user_id)
+
+                        # --- 1. Проверяем ОБЩИЕ настройки ---
+                        if (not u or not getattr(u, "telegram_notify_enabled", True)  # (Оставляем старую настройку)
+                                or not getattr(u, "notify_trainings", True)):
+                            s.notified_1h = True  # Помечаем, чтобы не спамить
+                            continue
+
+                        # --- 2. Формируем контент для PUSH ---
+                        when = t.start_time.strftime("%H:%M")
+                        date_s = t.date.strftime("%d.%m.%Y")
+                        title = "⏰ Напоминание о тренировке!"
+                        body = (
+                            f"Через 1 час: «{t.title or 'Онлайн-тренировка'}» с "
+                            f"{(t.trainer.name if t.trainer and getattr(t.trainer, 'name', None) else 'тренером')} в {when}."
+                        )
+
+                        # --- 3. Отправляем уведомление (БД + PUSH) ---
+                        # Импорт внутри функции для избежания циклических ссылок
+                        from notification_service import send_user_notification
+
+                        sent_mobile = send_user_notification(
+                            user_id=u.id,
+                            title=title,
+                            body=body,
+                            type='reminder',
+                            data={"training_id": str(t.id), "route": "/calendar"}
+                        )
+
+                        # --- 4. Помечаем как "уведомлено" ---
+                        if sent_mobile:
+                            s.notified_1h = True
+
+            startings = Training.query.filter(
+                Training.date == now.date(),
+                func.extract('hour', Training.start_time) == now.hour,
+                func.extract('minute', Training.start_time) == now.minute
+            ).all()
+
+            for t in startings:
+                # СЦЕНАРИЙ 1: Групповая
+                if t.group_id is not None:
+                    if not t.group_notified_start:
+                        members = GroupMember.query.filter_by(group_id=t.group_id).all()
+                        recipients_ids = {m.user_id for m in members}
+                        if t.trainer_id: recipients_ids.add(t.trainer_id)
+
+                        for uid in recipients_ids:
+                            u = db.session.get(User, uid)
+                            if not u: continue
+                            settings = get_effective_user_settings(u)
+                            if not settings.notify_trainings: continue
+
+                            from notification_service import send_user_notification
+                            send_user_notification(
+                                user_id=u.id,
+                                title="🚀 Тренировка началась!",
+                                body=f"Заходите в видео-чат: «{t.title}».",
+                                type='info',
+                                data={"training_id": str(t.id), "route": "/squad"}
+                            )
+                        t.group_notified_start = True
+
+                # СЦЕНАРИЙ 2: Публичная
+                else:
+                    rows = TrainingSignup.query.filter_by(training_id=t.id).all()
+                    for s in rows:
+                        # пропускаем, если уже отмечали старт
+                        if getattr(s, "notified_start", False):
+                            continue
+                        u = db.session.get(User, s.user_id)
+
+                        # --- 1. Проверяем ОБЩИЕ настройки ---
+                        if (not u or not getattr(u, "telegram_notify_enabled", True)
+                                or not getattr(u, "notify_trainings", True)):
+                            s.notified_start = True  # Помечаем, чтобы не спамить
+                            continue
+
+                        # --- 2. Формируем контент для PUSH ---
+                        when = t.start_time.strftime("%H:%M")
+                        date_s = t.date.strftime("%d.%m.%Y")
+                        title = "🏁 Тренировка начинается!"
+                        body = f"«{t.title or 'Онлайн-тренировка'}» началась. Тренер: {(t.trainer.name if t.trainer and getattr(t.trainer, 'name', None) else 'тренер')}."
+
+                        # --- 3. Отправляем уведомление (БД + PUSH) ---
+                        from notification_service import send_user_notification
+
+                        sent_mobile = send_user_notification(
+                            user_id=u.id,
+                            title=title,
+                            body=body,
+                            type='info',
+                            data={"training_id": str(t.id), "route": "/calendar"}
+                        )
+
+                        # --- 4. Помечаем как "уведомлено" ---
+                        if sent_mobile:
+                            s.notified_start = True
+
+            # --- ИЗМЕНЕНИЕ: ВЫНЕСЛИ ПРОВЕРКУ ПОДПИСОК ИЗ ЦИКЛА ТРЕНИРОВОК ---
+            # Получаем только тех пользователей, у которых активна подписка
+            users = User.query.join(Subscription).filter(
+                Subscription.status == 'active',
+                Subscription.end_date.isnot(None)
+            ).all()
+
+            for u in users:
+                sub = u.subscription
+                days_left = (sub.end_date - now_d).days
+
+                fcm_token = getattr(u, "fcm_device_token", None)
+                settings = get_effective_user_settings(u)
+
+                if days_left == 5 and not u.renewal_telegram_sent and fcm_token and settings.notify_subscription:
+                    try:
+                        base = os.getenv("APP_BASE_URL", "").rstrip("/")
+                        purchase_path = url_for("purchase_page") if app and app.app_context else "/purchase"
+                        link = f"{base}{purchase_path}" if base else purchase_path
+
+                        title = "⏳ Подписка истекает"
+                        body = "Осталось 5 дней. Не теряйте доступ к тренировкам — продлите сейчас."
+
+                        from notification_service import send_user_notification
+
+                        if send_user_notification(
+                                user_id=u.id,
+                                title=title,
+                                body=body,
+                                type='warning',
+                                data={"route": "/purchase"}
+                        ):
+                            u.renewal_telegram_sent = True
+                    except Exception:
+                        pass
+
+            if now.minute == 0 and now.hour == 10:
+                two_weeks_ago = now_d - timedelta(days=14)
+
+                users_to_remind = User.query.filter(User.fcm_device_token.isnot(None)).all()
+
+                for u in users_to_remind:
+                    settings = get_effective_user_settings(u)
+
+                    if not settings.notify_meals:
+                        continue
+
+                    latest_analysis = BodyAnalysis.query.filter_by(user_id=u.id).order_by(
+                        BodyAnalysis.timestamp.desc()).first()
+
+                    if latest_analysis:
+                        if latest_analysis.timestamp.date() <= two_weeks_ago:
+                            if u.last_measurement_reminder_sent_at is None or \
+                                    (now - u.last_measurement_reminder_sent_at).days >= 14:
+
+                                from notification_service import send_user_notification
+
+                                title = "⏰ Пора сделать замер!"
+                                body = f"Привет, {u.name}! Прошло 2 недели с последнего замера. Пора обновить данные."
+
+                                if send_user_notification(
+                                        user_id=u.id,
+                                        title=title,
+                                        body=body,
+                                        type='info',
+                                        data={"route": "/profile"}
+                                ):
+                                    u.last_measurement_reminder_sent_at = now
+                                    db.session.commit()
+
+            # --- ЕЖЕНЕДЕЛЬНЫЕ ИТОГИ (Понедельник 09:00 Алматы) ---
+            if now.weekday() == 0 and now.hour == 9 and now.minute == 0:
+                today_date = now.date()
+                start_of_last_week = today_date - timedelta(days=7)
+                end_of_last_week = today_date - timedelta(days=1)
+
+                groups = Group.query.all()
+                for group in groups:
+                    scores = db.session.query(
+                        SquadScoreLog.user_id,
+                        func.sum(SquadScoreLog.points).label('total')
+                    ).filter(
+                        SquadScoreLog.group_id == group.id,
+                        func.date(SquadScoreLog.created_at) >= start_of_last_week,
+                        func.date(SquadScoreLog.created_at) <= end_of_last_week
+                    ).group_by(SquadScoreLog.user_id).order_by(text('total DESC')).all()
+
+                    for rank, (uid, score) in enumerate(scores[:3]):
+                        place = rank + 1
+                        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+                        title_msg = f"Итоги недели: {place} место! {medals.get(place, '')}"
+                        body_msg = f"Так держать! Вы набрали {score} баллов и заняли {place} место в отряде {group.name}."
+
+                        from notification_service import send_user_notification
+                        send_user_notification(
+                            user_id=uid,
+                            title=title_msg,
+                            body=body_msg,
+                            type='success',
+                            data={"route": "/squad", "args": "stories"}
+                        )
+
+                    for uid, score in scores[3:]:
+                        from notification_service import send_user_notification
+                        send_user_notification(
+                            user_id=uid,
+                            title="Итоги недели подведены 📊",
+                            body=f"Посмотрите результаты битвы в отряде {group.name}!",
+                            type='info',
+                            data={"route": "/squad", "args": "stories"}
+                        )
+
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error in notification worker: {e}")
+        finally:
+            db.session.remove()
 
 def create_app():
     app = Flask(__name__)
@@ -806,14 +799,38 @@ def get_effective_user_settings(u):
         db.session.add(s)
         db.session.commit()
     return s
+
+
+import fcntl
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
+
+
 def start_training_notifier():
-    global _notifier_started
-    if _notifier_started:
+    if os.getenv("ENABLE_TRAINING_NOTIFIER", "1") != "1":
         return
-    _notifier_started = True
-    if os.getenv("ENABLE_TRAINING_NOTIFIER", "1") == "1":
-        th = threading.Thread(target=_notification_worker, daemon=True)
-        th.start()
+
+    try:
+        # Пытаемся захватить системную блокировку файла.
+        # Это гарантирует, что только ОДИН процесс Gunicorn запустит планировщик задач.
+        lock_file = open("training_notifier.lock", "w")
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # Если блокировка успешна, запускаем APScheduler
+        scheduler = BackgroundScheduler()
+        # Выполняем _notification_worker каждую 1 минуту
+        scheduler.add_job(func=_notification_worker, trigger='interval', minutes=1, id='training_notifier',
+                          replace_existing=True)
+        scheduler.start()
+        atexit.register(lambda: scheduler.shutdown())
+
+        # Сохраняем файл в app, чтобы сборщик мусора не закрыл его и блокировка не спала
+        app.scheduler_lock_file = lock_file
+        print("✅ Notification scheduler locked and started in THIS worker.")
+
+    except IOError:
+        # Файл уже заблокирован другим воркером. Молча пропускаем запуск.
+        pass
 
 def _ensure_column(table, column, ddl):
     # инспектору передаём «сырое» имя (без кавычек), он сам разберётся
@@ -2088,32 +2105,32 @@ def api_register_google():
             db.session.flush()
             avatar_file_id = new_file.id
 
-        # Парсинг даты
+    # Парсинг даты
+    try:
+        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+    except:
+        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+
+    # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+    user_height = None
+    if height:
         try:
-            date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+            user_height = int(float(height))
         except:
-            return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+            pass
+    # --------------------------
 
-        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
-        user_height = None
-        if height:
-            try:
-                user_height = int(float(height))
-            except:
-                pass
-        # --------------------------
-
-        # 1. Создаем пользователя
-        user = User(
-            name=name,
-            email=email,
-            password=hashed_pw,
-            date_of_birth=date_of_birth,
-            sex=sex,
-            height=user_height,  # Теперь переменная user_height существует
-            face_consent=face_consent,
-            avatar_file_id=avatar_file_id
-        )
+    # 1. Создаем пользователя
+    user = User(
+        name=name,
+        email=email,
+        password=hashed_pw,
+        date_of_birth=date_of_birth,
+        sex=sex,
+        height=user_height,  # Теперь переменная user_height существует
+        face_consent=face_consent,
+        avatar_file_id=avatar_file_id
+    )
     db.session.add(user)
     db.session.flush()  # Получаем user.id
 
@@ -2149,7 +2166,6 @@ def api_register_google():
             "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None
         }
     }), 201
-
 
 @app.route('/api/register_apple', methods=['POST'])
 def api_register_apple():
@@ -2218,36 +2234,36 @@ def api_register_apple():
             db.session.flush()
             avatar_file_id = new_file.id
 
-        # Парсинг даты
+    # Парсинг даты
+    try:
+        date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+    except:
+        return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+
+    # Проверяем, не занят ли email (на всякий случай)
+    if User.query.filter(func.lower(User.email) == email.casefold()).first():
+        return jsonify({"ok": False, "errors": ["EMAIL_EXISTS"]}), 400
+
+    # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+    user_height = None
+    if height:
         try:
-            date_of_birth = _parse_date_yyyy_mm_dd(date_str)
+            user_height = int(float(height))
         except:
-            return jsonify({"ok": False, "errors": ["DATE_INVALID"]}), 400
+            pass
+    # --------------------------
 
-        # Проверяем, не занят ли email (на всякий случай)
-        if User.query.filter(func.lower(User.email) == email.casefold()).first():
-            return jsonify({"ok": False, "errors": ["EMAIL_EXISTS"]}), 400
-
-        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
-        user_height = None
-        if height:
-            try:
-                user_height = int(float(height))
-            except:
-                pass
-        # --------------------------
-
-        # 1. Создаем пользователя
-        user = User(
-            name=name,
-            email=email,
-            password=hashed_pw,
-            date_of_birth=date_of_birth,
-            sex=sex,
-            height=user_height,  # Теперь переменная user_height существует
-            face_consent=face_consent,
-            avatar_file_id=avatar_file_id
-        )
+    # 1. Создаем пользователя
+    user = User(
+        name=name,
+        email=email,
+        password=hashed_pw,
+        date_of_birth=date_of_birth,
+        sex=sex,
+        height=user_height,  # Теперь переменная user_height существует
+        face_consent=face_consent,
+        avatar_file_id=avatar_file_id
+    )
     db.session.add(user)
     db.session.flush()
 
@@ -2626,6 +2642,7 @@ def api_register_v2():
 
 @app.route('/api/onboarding/analyze_scales_photo', methods=['POST'])
 @login_required
+@limiter.limit("5 per hour")
 def analyze_scales_photo():
     """
     НОВЫЙ ФЛОУ (ЭТАП 2): Анализирует скриншот "умных весов".
@@ -3384,6 +3401,7 @@ def complete_onboarding_tour():
 
 @app.route('/upload_analysis', methods=['POST'])
 @login_required
+@limiter.limit("5 per hour")
 def upload_analysis():
     file = request.files.get('file')
     user = get_current_user()
@@ -3441,26 +3459,26 @@ def upload_analysis():
             if not result.get('muscle_mass') and last_analysis.muscle_mass:
                 result['muscle_mass'] = last_analysis.muscle_mass
 
-                # Список обязательных полей (оставили только критически важные)
+        # Список обязательных полей (оставили только критически важные)
         required_keys = ['weight', 'muscle_mass', 'fat_mass', 'metabolism']
         missing_keys = [key for key in required_keys if key not in result or result.get(key) is None]
 
         if missing_keys:
-                    # Словарь для перевода полей на русский
+            # Словарь для перевода полей на русский
             field_names_ru = {
-                        'weight': 'Вес',
-                        'muscle_mass': 'Мышечная масса',
-                        'fat_mass': 'Жировая масса',
-                        'metabolism': 'Метаболизм (BMR)',
-                        'body_age': 'Метаболический возраст'
+                'weight': 'Вес',
+                'muscle_mass': 'Мышечная масса',
+                'fat_mass': 'Жировая масса',
+                'metabolism': 'Метаболизм (BMR)',
+                'body_age': 'Метаболический возраст'
             }
-                    # Формируем список отсутствующих полей на русском
+            # Формируем список отсутствующих полей на русском
             missing_ru = [field_names_ru.get(k, k) for k in missing_keys]
             missing_str = ', '.join(missing_ru)
 
             return jsonify({
-                        "success": False,
-                        "error": f"Не удалось распознать обязательные показатели: {missing_str}. Попробуйте сделать более четкое фото или загрузить другой файл."
+                "success": False,
+                "error": f"Не удалось распознать обязательные показатели: {missing_str}. Попробуйте сделать более четкое фото или загрузить другой файл."
             }), 400
 
         # --- ШАГ 2: Генерация целей ---
@@ -4251,6 +4269,7 @@ def activity():
 # ЭТО ПРАВИЛЬНЫЙ КОД
 
 @app.route('/analyze_meal_photo', methods=['POST'])
+@limiter.limit("20 per hour")
 def analyze_meal_photo():
     # Поддержка вызова из Telegram: принимаем chat_id в форме или query
     chat_id = request.form.get('chat_id') or request.args.get('chat_id')
@@ -4938,6 +4957,164 @@ def admin_delete_user(user_id):
         flash(f"Критическая ошибка удаления: {e}", "error")
 
     return redirect(url_for("admin_dashboard"))
+
+
+# ===== ADMIN: МАСТЕР-КАЛЕНДАРЬ ТРЕНИРОВОК =====
+
+@app.route("/admin/trainings")
+@admin_required
+def admin_trainings_calendar():
+    # Показываем все тренировки, начиная с прошлой недели
+    start_date = date.today() - timedelta(days=7)
+    trainings = Training.query.filter(Training.date >= start_date).order_by(Training.date.desc(),
+                                                                            Training.start_time.desc()).all()
+
+    # Собираем данные: сколько записано людей
+    data = []
+    for t in trainings:
+        data.append({
+            "id": t.id,
+            "title": t.title,
+            "date": t.date.strftime("%d.%m.%Y"),
+            "time": t.start_time.strftime("%H:%M"),
+            "trainer": t.trainer.name if t.trainer else "Неизвестно",
+            "group": t.group.name if t.group else "Публичная",
+            "signups_count": len(t.signups),
+            "is_past": datetime.combine(t.date, t.start_time) < datetime.now()
+        })
+
+    return render_template("admin_trainings.html", trainings=data)
+
+
+@app.route("/admin/trainings/<int:tid>/cancel", methods=["POST"])
+@admin_required
+def admin_cancel_training(tid):
+    t = db.session.get(Training, tid)
+    if not t:
+        flash("Тренировка не найдена", "error")
+        return redirect(url_for("admin_trainings_calendar"))
+
+    reason = request.form.get("reason", "По техническим причинам.")
+    notified_count = 0
+    from notification_service import send_user_notification
+
+    title = "❌ Тренировка отменена"
+    body = f"Тренировка «{t.title}» ({t.date.strftime('%d.%m')} в {t.start_time.strftime('%H:%M')}) отменена. Причина: {reason}"
+
+    # 1. Если групповая — уведомляем весь отряд
+    if t.group_id:
+        group = db.session.get(Group, t.group_id)
+        if group:
+            recipients_ids = [m.user_id for m in group.members]
+            for uid in recipients_ids:
+                if send_user_notification(user_id=uid, title=title, body=body, type="warning"):
+                    notified_count += 1
+    # 2. Если публичная — уведомляем только тех, кто записался
+    else:
+        signups = TrainingSignup.query.filter_by(training_id=t.id).all()
+        for s in signups:
+            if send_user_notification(user_id=s.user_id, title=title, body=body, type="warning"):
+                notified_count += 1
+
+    # 3. Каскадное удаление
+    TrainingSignup.query.filter_by(training_id=t.id).delete()
+    db.session.delete(t)
+    db.session.commit()
+
+    log_audit("cancel_training", "Training", tid, new={"title": t.title, "notified": notified_count})
+    flash(f"Тренировка отменена. Уведомления отправлены {notified_count} пользователям.", "success")
+    return redirect(url_for("admin_trainings_calendar"))
+
+
+# ===== ADMIN: УПРАВЛЕНИЕ ДОСТИЖЕНИЯМИ =====
+
+@app.route("/admin/achievements")
+@admin_required
+def admin_achievements():
+    achievements = Achievement.query.order_by(Achievement.created_at.desc()).all()
+    return render_template("admin_achievements.html", achievements=achievements)
+
+
+@app.route("/admin/achievements/create", methods=["POST"])
+@admin_required
+def admin_create_achievement():
+    slug = request.form.get("slug", "").strip()
+    title = request.form.get("title", "").strip()
+    description = request.form.get("description", "").strip()
+    icon = request.form.get("icon", "🏆").strip()
+    color = request.form.get("color", "0xFFFFD700").strip()
+
+    if not slug or not title:
+        flash("Ключ (slug) и Название обязательны", "error")
+        return redirect(url_for("admin_achievements"))
+
+    if Achievement.query.filter_by(slug=slug).first():
+        flash("Достижение с таким системным ключом уже существует", "error")
+        return redirect(url_for("admin_achievements"))
+
+    ach = Achievement(slug=slug, title=title, description=description, icon=icon, color=color)
+    db.session.add(ach)
+    db.session.commit()
+
+    log_audit("create_achievement", "Achievement", ach.id, new={"slug": slug, "title": title})
+    flash(f"Достижение '{title}' успешно создано!", "success")
+    return redirect(url_for("admin_achievements"))
+
+
+@app.route("/admin/achievements/<int:aid>/delete", methods=["POST"])
+@admin_required
+def admin_delete_achievement(aid):
+    ach = db.session.get(Achievement, aid)
+    if ach:
+        # Удаляем у всех пользователей прогресс по этой ачивке
+        UserAchievement.query.filter_by(slug=ach.slug).delete()
+        db.session.delete(ach)
+        db.session.commit()
+        flash("Достижение удалено.", "success")
+    return redirect(url_for("admin_achievements"))
+
+
+# ⚠️ ВАЖНО: ЗАМЕНИТЕ ВАШИ СТАРЫЕ API-МАРШРУТЫ ДЛЯ АЧИВОК НА ЭТИ:
+
+@app.route('/api/achievements', methods=['GET'])
+@login_required
+def get_achievements():
+    user = get_current_user()
+    unlocked = UserAchievement.query.filter_by(user_id=user.id).all()
+    unlocked_slugs = {u.slug for u in unlocked}
+
+    # Теперь берем из базы, а не из константы
+    achievements_db = Achievement.query.filter_by(is_active=True).all()
+
+    result = []
+    for ach in achievements_db:
+        result.append({
+            "slug": ach.slug,
+            "title": ach.title,
+            "description": ach.description,
+            "icon": ach.icon,
+            "color": ach.color,
+            "is_unlocked": ach.slug in unlocked_slugs
+        })
+    return jsonify({"ok": True, "achievements": result})
+
+
+@app.route('/api/achievements/unseen', methods=['POST'])
+@login_required
+def get_unseen_achievements():
+    user = get_current_user()
+    unseen = UserAchievement.query.filter_by(user_id=user.id, seen=False).all()
+    data = []
+    for ua in unseen:
+        ach = Achievement.query.filter_by(slug=ua.slug, is_active=True).first()
+        if ach:
+            data.append({
+                "slug": ach.slug, "title": ach.title,
+                "description": ach.description, "icon": ach.icon, "color": ach.color
+            })
+        ua.seen = True
+    db.session.commit()
+    return jsonify({"ok": True, "new_achievements": data})
 
 @app.route('/groups')
 @login_required

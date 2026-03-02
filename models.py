@@ -696,6 +696,17 @@ class BodyVisualization(db.Model):
     user = db.relationship("User", backref=db.backref("visualizations", lazy=True,
                                                       order_by="desc(BodyVisualization.created_at)"))
 
+class Achievement(db.Model):
+    __tablename__ = 'achievements'
+
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(50), unique=True, nullable=False) # например 'first_workout'
+    title = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(255), nullable=False)
+    icon = db.Column(db.String(50), default='🏆')
+    color = db.Column(db.String(20), default='0xFFFFD700') # Цвет в формате Flutter (HEX)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(UTC))
 
 class UserAchievement(db.Model):
     __tablename__ = 'user_achievements'
