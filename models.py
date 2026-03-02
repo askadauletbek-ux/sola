@@ -438,7 +438,7 @@ class Training(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     trainer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
-    # Добавлено поле group_id (nullable=True, так как бывают общие тренировки)
+    # Добавлено поле group_id
     group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=True, index=True)
 
     meeting_link = db.Column(db.String(255), nullable=False)
@@ -452,18 +452,21 @@ class Training(db.Model):
     capacity = db.Column(db.Integer, default=10)
     is_public = db.Column(db.Boolean, default=True, server_default=expression.true())
 
-    # Флаги для групповых уведомлений (чтобы не спамить)
+    # Флаги для групповых уведомлений
     group_notified_1h = db.Column(db.Boolean, default=False, server_default=expression.false())
     group_notified_start = db.Column(db.Boolean, default=False, server_default=expression.false())
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # --- ОТНОШЕНИЯ ---
     trainer = db.relationship('User', backref=db.backref('trainings', lazy=True))
     signups = db.relationship('TrainingSignup', backref='training', cascade="all, delete-orphan")
 
-    __table_args__ = (db.UniqueConstraint('trainer_id', 'date', 'start_time', name='uq_trainer_date_start'),)
+    # ⚠️ ВОТ ЭТА СТРОКА БЫЛА ПРОПУЩЕНА (Добавьте её!):
+    group = db.relationship('Group', backref=db.backref('group_trainings', lazy=True))
 
+    __table_args__ = (db.UniqueConstraint('trainer_id', 'date', 'start_time', name='uq_trainer_date_start'),)
     # UI helper
     def to_dict(self, me_id=None):
         mine = (me_id is not None and self.trainer_id == me_id)
