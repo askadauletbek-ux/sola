@@ -1869,6 +1869,11 @@ def api_login():
         # 4. Создаем сессию
         session['user_id'] = user.id
 
+        # Получаем статус заявки для логина
+        latest_app = SubscriptionApplication.query.filter_by(user_id=user.id).order_by(
+            SubscriptionApplication.created_at.desc()).first()
+        delivery_status = latest_app.status if latest_app else None
+
         # 5. Возвращаем успешный ответ с данными пользователя
         # (Структура совпадает с api_me и api_google_login)
         return jsonify({
@@ -1880,7 +1885,8 @@ def api_login():
                 "has_subscription": bool(getattr(user, 'has_subscription', False)),
                 "is_trainer": bool(getattr(user, 'is_trainer', False)),
                 "onboarding_complete": bool(getattr(user, 'onboarding_complete', False)),
-                "onboarding_v2_complete": bool(getattr(user, 'onboarding_v2_complete', False))
+                "onboarding_v2_complete": bool(getattr(user, 'onboarding_v2_complete', False)),
+                "delivery_status": delivery_status
             }
         }), 200
 
@@ -2373,6 +2379,10 @@ def api_me():
             squad_score = 0
             squad_rank = '-'
 
+    latest_app = SubscriptionApplication.query.filter_by(user_id=u.id).order_by(
+        SubscriptionApplication.created_at.desc()).first()
+    delivery_status = latest_app.status if latest_app else None
+
     return jsonify({
         "ok": True,
         "user": {
@@ -2392,7 +2402,7 @@ def api_me():
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
             "is_new_squad_member": bool(getattr(u, "is_new_squad_member", False)),
-
+            "delivery_status": delivery_status,
             # Имена группы и тренера
             "squad_name": u.own_group.name if u.own_group else (
                 u.groups.first().group.name if u.groups.first() else None),
