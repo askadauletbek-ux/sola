@@ -7130,38 +7130,8 @@ def app_calendar_data():
         "training_dates": training_dates_list
     })
 
-@app.route('/api/achievements', methods=['GET'])
-@login_required
-def get_achievements():
-    user = get_current_user()
-    unlocked = UserAchievement.query.filter_by(user_id=user.id).all()
-    unlocked_slugs = {u.slug for u in unlocked}
-
-    result = []
-    for slug, meta in ACHIEVEMENTS_METADATA.items():
-        result.append({
-            "slug": slug,
-            "title": meta["title"],
-            "description": meta["description"],
-            "icon": meta["icon"],
-            "color": meta["color"],
-            "is_unlocked": slug in unlocked_slugs
-        })
-    return jsonify({"ok": True, "achievements": result})
 
 
-@app.route('/api/achievements/unseen', methods=['POST'])
-@login_required
-def get_unseen_achievements():
-    user = get_current_user()
-    unseen = UserAchievement.query.filter_by(user_id=user.id, seen=False).all()
-    data = []
-    for ua in unseen:
-        meta = ACHIEVEMENTS_METADATA.get(ua.slug)
-        if meta: data.append(meta)
-        ua.seen = True
-    db.session.commit()
-    return jsonify({"ok": True, "new_achievements": data})
 
 @app.route('/api/app/register_device', methods=['POST'])
 @login_required
