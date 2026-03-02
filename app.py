@@ -806,6 +806,36 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
 
+def grant_achievement(user, slug):
+    """Выдает достижение, если оно еще не получено."""
+    # 1. Проверяем, существует ли такая ачивка в БД
+    ach_meta = Achievement.query.filter_by(slug=slug, is_active=True).first()
+    if not ach_meta:
+        return False
+
+    # 2. Проверяем, нет ли её уже у юзера
+    existing = UserAchievement.query.filter_by(user_id=user.id, slug=slug).first()
+    if existing:
+        return False
+
+    # 3. Выдаем
+    new_ach = UserAchievement(
+        user_id=user.id,
+        slug=slug,
+        seen=False  # Чтобы на фронте выскочило диалоговое окно
+    )
+    db.session.add(new_ach)
+
+    # Отправляем PUSH о получении награды
+    from notification_service import send_user_notification
+    send_user_notification(
+        user_id=user.id,
+        title=f"Новая награда: {ach_meta.title} {ach_meta.icon}",
+        body="Зайдите в профиль, чтобы посмотреть свои достижения!",
+        type='success'
+    )
+    return True
+
 def start_training_notifier():
     if os.getenv("ENABLE_TRAINING_NOTIFIER", "1") != "1":
         return
@@ -4964,12 +4994,9 @@ def admin_delete_user(user_id):
 @app.route("/admin/trainings")
 @admin_required
 def admin_trainings_calendar():
-    # Показываем все тренировки, начиная с прошлой недели
     start_date = date.today() - timedelta(days=7)
-    trainings = Training.query.filter(Training.date >= start_date).order_by(Training.date.desc(),
-                                                                            Training.start_time.desc()).all()
+    trainings = Training.query.filter(Training.date >= start_date).order_by(Training.date.desc(), Training.start_time.desc()).all()
 
-    # Собираем данные: сколько записано людей
     data = []
     for t in trainings:
         data.append({
@@ -4979,12 +5006,11 @@ def admin_trainings_calendar():
             "time": t.start_time.strftime("%H:%M"),
             "trainer": t.trainer.name if t.trainer else "Неизвестно",
             "group": t.group.name if t.group else "Публичная",
+            "group_id": t.group_id, # <--- ВАЖНО: Добавьте это поле
             "signups_count": len(t.signups),
             "is_past": datetime.combine(t.date, t.start_time) < datetime.now()
         })
-
     return render_template("admin_trainings.html", trainings=data)
-
 
 @app.route("/admin/trainings/<int:tid>/cancel", methods=["POST"])
 @admin_required
@@ -5115,6 +5141,41 @@ def get_unseen_achievements():
         ua.seen = True
     db.session.commit()
     return jsonify({"ok": True, "new_achievements": data})
+
+
+@app.route("/admin/groups/<int:group_id>/notify", methods=["POST"])
+@admin_required
+def admin_notify_group(group_id):
+    group = db.session.get(Group, group_id)
+    if not group:
+        return jsonify({"ok": False, "error": "Группа не найдена"}), 404
+
+    data = request.get_json(force=True, silent=True) or {}
+    title = data.get("title", f"Сообщение для {group.name}")
+    body = data.get("body", "")
+
+    if not body:
+        return jsonify({"ok": False, "error": "Текст уведомления пуст"}), 400
+
+    # Получаем всех участников
+    members_ids = [m.user_id for m in group.members]
+
+    sent_count = 0
+    from notification_service import send_user_notification
+
+    for uid in members_ids:
+        # Отправляем каждому
+        if send_user_notification(
+                user_id=uid,
+                title=title,
+                body=body,
+                type='info',
+                data={"route": "/squad"}
+        ):
+            sent_count += 1
+
+    log_audit("group_mass_notify", "Group", group_id, new={"sent_to": sent_count})
+    return jsonify({"ok": True, "sent": sent_count, "total": len(members_ids)})
 
 @app.route('/groups')
 @login_required

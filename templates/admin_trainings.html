@@ -2,7 +2,7 @@
 {% block title %}Мастер-календарь | Kilogr.app{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-8">
+<div class="max-w-7xl mx-auto px-4 py-8" x-data="trainingsManager()">
     <div class="flex items-center justify-between mb-6">
         <h1 class="text-2xl font-bold text-gray-900">Мастер-календарь тренировок</h1>
         <a href="/admin" class="text-sm font-medium text-indigo-600 hover:text-indigo-800">← Назад в панель</a>
@@ -12,15 +12,15 @@
         <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата и Время</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Название</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тренер</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тип / Группа</th>
-                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Записей</th>
-                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Действия</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Дата и Время</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Название</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Тренер</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Тип / Группа</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Записей</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Действия</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200">
+            <tbody class="divide-y divide-gray-200 bg-white">
                 {% for t in trainings %}
                 <tr class="{% if t.is_past %}bg-gray-50 opacity-75{% else %}hover:bg-gray-50{% endif %} transition-colors">
                     <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
@@ -29,21 +29,29 @@
                     <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{{ t.title }}</td>
                     <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{{ t.trainer }}</td>
                     <td class="px-4 py-4 whitespace-nowrap text-sm">
-                        {% if t.group == 'Публичная' %}
-                            <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">Публичная</span>
-                        {% else %}
-                            <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-medium">{{ t.group }}</span>
-                        {% endif %}
+                        <div class="flex items-center gap-2">
+                            {% if t.group == 'Публичная' %}
+                                <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">Публичная</span>
+                            {% else %}
+                                <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-medium">{{ t.group }}</span>
+                                {# Кнопка уведомления только для групп #}
+                                <button @click="openNotify('{{ t.group }}', '{{ t.group_id }}')" title="Уведомить участников группы" class="text-indigo-600 hover:text-indigo-800">
+                                    📢
+                                </button>
+                            {% endif %}
+                        </div>
                     </td>
                     <td class="px-4 py-4 whitespace-nowrap text-sm text-center text-gray-900 font-bold">
                         {{ t.signups_count }}
                     </td>
                     <td class="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
                         {% if not t.is_past %}
-                        <form method="POST" action="{{ url_for('admin_cancel_training', tid=t.id) }}" onsubmit="return confirm('Вы уверены? Тренировка будет удалена, а все записанные пользователи получат PUSH-уведомление.');">
-                            <input type="hidden" name="reason" value="По техническим причинам отменена администратором.">
-                            <button type="submit" class="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-lg transition">Отменить</button>
-                        </form>
+                        <div class="flex justify-end gap-2">
+                            <form method="POST" action="{{ url_for('admin_cancel_training', tid=t.id) }}" onsubmit="return confirm('Вы уверены? Тренировка будет удалена, а все записанные пользователи получат PUSH-уведомление.');">
+                                <input type="hidden" name="reason" value="По техническим причинам отменена администратором.">
+                                <button type="submit" class="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-lg transition">Отменить</button>
+                            </form>
+                        </div>
                         {% else %}
                         <span class="text-gray-400 text-xs">Прошла</span>
                         {% endif %}
@@ -56,5 +64,84 @@
         <div class="p-8 text-center text-gray-500">Нет тренировок за последнее время.</div>
         {% endif %}
     </div>
+
+    <div x-show="isModalOpen" class="fixed inset-0 z-50 overflow-y-auto" x-cloak>
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity" @click="isModalOpen = false"></div>
+            <div class="bg-white rounded-xl overflow-hidden shadow-xl transform transition-all sm:max-w-lg sm:w-full p-6 relative z-10">
+                <h3 class="text-lg font-bold text-gray-900 mb-2">Объявление для сквада</h3>
+                <p class="text-sm text-gray-500 mb-4">Группа: <span class="font-semibold text-indigo-600" x-text="targetGroupName"></span></p>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Заголовок</label>
+                        <input type="text" x-model="notifTitle" class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Текст сообщения</label>
+                        <textarea x-model="notifBody" rows="3" class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Например: Тренировка начнется на 15 минут позже..."></textarea>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+                    <button @click="isModalOpen = false" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition">Отмена</button>
+                    <button @click="sendGroupNotify()" class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition shadow-sm" :disabled="loading">
+                        <span x-show="!loading">Отправить всем</span>
+                        <span x-show="loading">Отправка...</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
+<script>
+function trainingsManager() {
+    return {
+        isModalOpen: false,
+        loading: false,
+        targetGroupName: '',
+        targetGroupId: '',
+        notifTitle: 'Важное объявление 📢',
+        notifBody: '',
+
+        openNotify(name, id) {
+            this.targetGroupName = name;
+            this.targetGroupId = id;
+            this.isModalOpen = true;
+        },
+
+        async sendGroupNotify() {
+            if (!this.notifBody.trim()) return alert('Введите текст сообщения');
+            this.loading = true;
+            try {
+                const res = await fetch(`/admin/groups/${this.targetGroupId}/notify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: this.notifTitle,
+                        body: this.notifBody
+                    })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    alert(`Успешно! Уведомлено участников: ${data.sent}`);
+                    this.isModalOpen = false;
+                    this.notifBody = '';
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (e) {
+                alert('Ошибка сети');
+            } finally {
+                this.loading = false;
+            }
+        }
+    }
+}
+</script>
+
+<style>
+    [x-cloak] { display: none !important; }
+</style>
 {% endblock %}
