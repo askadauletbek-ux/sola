@@ -106,12 +106,14 @@ if SENTRY_DSN:
 
 app = Flask(__name__)
 
-# Настройка лимитов (базовое хранение в памяти)
+# Настройка лимитов (теперь через Redis для работы с Gunicorn)
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 limiter = Limiter(
     get_remote_address,
     app=app,
     default_limits=["5000 per day", "500 per hour"],
-    storage_uri="memory://"
+    storage_uri=redis_url
 )
 
 app.secret_key = os.getenv("SECRET_KEY", "supersecret")
