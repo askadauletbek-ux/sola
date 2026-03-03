@@ -1800,7 +1800,7 @@ def app_log_meal():
     # Ищем существующий (для обновления)
     meal = MealLog.query.filter_by(
         user_id=user.id,
-        date=target_date,  # Используем target_date
+        date=target_date,
         meal_type=data['meal_type']
     ).first()
 
@@ -1808,7 +1808,7 @@ def app_log_meal():
         # Создаем новый
         meal = MealLog(
             user_id=user.id,
-            date=target_date,  # Используем target_date
+            date=target_date,
             meal_type=data['meal_type']
         )
 
@@ -1850,27 +1850,18 @@ def app_log_meal():
         # ----------------------------------------
 
         # --- ПРОВЕРКА АЧИВОК ---
-        check_all_achievements(user)
-
-        # Проверяем новые ачивки для поста в ленту
+        print(f"DEBUG: app_log_meal вызываю check_all_achievements для юзера {user.id}")
         try:
-            if hasattr(UserAchievement, 'created_at'):
-                recent_achievements = UserAchievement.query.filter(
-                    UserAchievement.user_id == user.id,
-                    UserAchievement.created_at >= datetime.now(UTC) - timedelta(seconds=15)
-                ).all()
-
-                for ach in recent_achievements:
-                    meta = ACHIEVEMENTS_METADATA.get(ach.slug)
-                    if meta:
-                        title = meta['title']
-                        trigger_ai_feed_post(user, f"Получено новое достижение: «{title}»!")
-        except Exception as e:
-            print(f"Error posting achievement feed: {e}")
-
+            # Явный импорт из нового движка, чтобы точно работала обновленная функция
+            from achievements_engine import check_all_achievements
+            check_all_achievements(user)
+        except Exception as ach_err:
+            print(f"ERROR calling check_all_achievements: {ach_err}")
         # -----------------------
-        # ВАЖНО: Эти строки должны быть на уровне с try (не внутри except)
+
+        # ВАЖНО: Коммитим всё разом (и еду, и ачивки, если они добавились)
         db.session.commit()
+        print("DEBUG: db.session.commit() успешен")
 
         # ANALYTICS: Meal Logged (Backend backup)
         try:
