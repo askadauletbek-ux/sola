@@ -67,10 +67,11 @@ def check_all_achievements(user):
     new_unlocks = []
 
     try:
-        db.session.flush()  # Гарантируем, что свежая еда видна БД
+        db.session.flush()
 
+        # ИСПРАВЛЕНИЕ: меняем "first_log" на "first_meal"
         if _check_first_meal(user):
-            if grant_achievement(user, "first_log"): new_unlocks.append("first_log")
+            if grant_achievement(user, "first_meal"): new_unlocks.append("first_meal")
 
         if _check_first_training(user):
             if grant_achievement(user, "first_workout"): new_unlocks.append("first_workout")
@@ -89,6 +90,7 @@ def check_all_achievements(user):
 
     except Exception as e:
         print(f"[ACHIEVEMENTS] 💥 Ошибка в check_all_achievements: {e}", flush=True)
+        import traceback
         traceback.print_exc()
 
     return new_unlocks

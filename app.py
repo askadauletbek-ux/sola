@@ -5123,7 +5123,9 @@ def get_unseen_achievements():
                 "slug": ach.slug, "title": ach.title,
                 "description": ach.description, "icon": ach.icon, "color": ach.color
             })
-        ua.seen = True
+            # ИСПРАВЛЕНИЕ: Отмечаем просмотренным ТОЛЬКО если ачивка реально ушла на фронт
+            ua.seen = True
+
     db.session.commit()
     return jsonify({"ok": True, "new_achievements": data})
 
