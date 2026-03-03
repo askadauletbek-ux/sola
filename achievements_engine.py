@@ -1,13 +1,18 @@
 import traceback
 import logging
+import sys
 from datetime import date, timedelta
 from sqlalchemy import func
 from extensions import db
-from models import User, MealLog, TrainingSignup, Activity, UserAchievement, Achievement
+from models import User, MealLog, TrainingSignup, Activity, UserAchievement, Achievement, BodyAnalysis
 
 # Настраиваем логгер, чтобы он пробивал буфер Gunicorn
 logger = logging.getLogger("achievements")
 logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)  # Направляем прямо в консоль Gunicorn
+    handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    logger.addHandler(handler)
 
 ACHIEVEMENTS_METADATA = {}
 
@@ -111,8 +116,15 @@ def _calculate_total_fat_loss_kg(user):
     logs = db.session.query(MealLog.date, func.sum(MealLog.calories)).filter_by(user_id=user.id).group_by(
         MealLog.date).all()
     if not logs: return 0.0
+
     activities = Activity.query.filter_by(user_id=user.id).all()
-    act_map = {a.date: a.active_kcal for a in activities}
-    bmr = user.metabolism or 2000
-    total_deficit = sum([max(0, (bmr + act_map.get(d, 0)) - kcal) for d, kcal in logs])
+    act_map = {a.date: (a.active_kcal or 0) for a in activities}  # Безопасное извлечение
+
+    # Берем метаболизм из последнего замера тела
+    latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
+    bmr = latest_analysis.metabolism if latest_analysis and latest_analysis.metabolism else 2000
+
+    # Безопасное извлечение kcal (защита от None, если в базе есть пустые значения)
+    total_deficit = sum([max(0, (bmr + act_map.get(d, 0)) - (kcal or 0)) for d, kcal in logs])
+
     return total_deficit / 7700.0
