@@ -1805,10 +1805,12 @@ def app_log_meal():
         print(f"DEBUG: app_log_meal вызываю check_all_achievements для юзера {user.id}")
         try:
             from achievements_engine import check_all_achievements
-            # Эта функция сама сделает commit для ачивок
             check_all_achievements(user)
         except Exception as ach_err:
             print(f"ERROR calling check_all_achievements: {ach_err}")
+
+        # ❗ ИСПРАВЛЕНИЕ: СОХРАНЯЕМ ВЫДАННЫЕ АЧИВКИ В БД ❗
+        db.session.commit()
 
         # ANALYTICS: Meal Logged (Backend backup)
         try:
