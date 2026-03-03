@@ -1,18 +1,8 @@
 import traceback
-import logging
-import sys
 from datetime import date, timedelta
 from sqlalchemy import func
 from extensions import db
-from models import User, MealLog, TrainingSignup, Activity, UserAchievement, Achievement, BodyAnalysis
-
-# Настраиваем логгер, чтобы он пробивал буфер Gunicorn
-logger = logging.getLogger("achievements")
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    handler = logging.StreamHandler(sys.stdout)  # Направляем прямо в консоль Gunicorn
-    handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-    logger.addHandler(handler)
+from models import User, MealLog, TrainingSignup, Activity, UserAchievement, Achievement
 
 ACHIEVEMENTS_METADATA = {}
 
@@ -20,18 +10,18 @@ ACHIEVEMENTS_METADATA = {}
 def grant_achievement(user, slug):
     """Выдает ачивку из БД, если её еще нет."""
     try:
-        logger.warning(f"[ACHIEVEMENTS] 🔍 Проверка выдачи '{slug}' для юзера ID {user.id}")
+        print(f"[ACHIEVEMENTS] 🔍 Проверка выдачи '{slug}' для юзера ID {user.id}", flush=True)
 
         # 1. Существует ли ачивка в БД
         ach_meta = Achievement.query.filter_by(slug=slug, is_active=True).first()
         if not ach_meta:
-            logger.warning(f"[ACHIEVEMENTS] ❌ Ачивка '{slug}' отключена или не существует в БД.")
+            print(f"[ACHIEVEMENTS] ❌ Ачивка '{slug}' отключена или не существует в БД.", flush=True)
             return False
 
         # 2. Нет ли её уже у юзера
         existing = UserAchievement.query.filter_by(user_id=user.id, slug=slug).first()
         if existing:
-            logger.warning(f"[ACHIEVEMENTS] ⏩ У юзера {user.id} уже есть '{slug}'. Пропускаем.")
+            print(f"[ACHIEVEMENTS] ⏩ У юзера {user.id} уже есть '{slug}'. Пропускаем.", flush=True)
             return False
 
         # 3. Выдаем
@@ -42,7 +32,7 @@ def grant_achievement(user, slug):
         )
         db.session.add(new_ach)
         db.session.flush()
-        logger.warning(f"[ACHIEVEMENTS] 🎉 УСПЕХ! Добавлена '{slug}' юзеру {user.id}!")
+        print(f"[ACHIEVEMENTS] 🎉 УСПЕХ! Добавлена '{slug}' юзеру {user.id}!", flush=True)
 
         # 4. Отправляем PUSH
         try:
@@ -55,24 +45,25 @@ def grant_achievement(user, slug):
                 data={"route": "/achievements"}
             )
         except Exception as e:
-            logger.error(f"[ACHIEVEMENTS] ⚠️ Ошибка PUSH: {e}")
+            print(f"[ACHIEVEMENTS] ⚠️ Ошибка PUSH: {e}", flush=True)
 
         # 5. Постим в AI-ленту (Squads)
         try:
             from app import trigger_ai_feed_post
             trigger_ai_feed_post(user, f"Получил(а) новое достижение: «{ach_meta.title}» {ach_meta.icon}!")
         except Exception as e:
-            logger.error(f"[ACHIEVEMENTS] ⚠️ Ошибка ленты: {e}")
+            print(f"[ACHIEVEMENTS] ⚠️ Ошибка ленты: {e}", flush=True)
 
         return True
 
     except Exception as e:
-        logger.error(f"[ACHIEVEMENTS] 💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        print(f"[ACHIEVEMENTS] 💥 КРИТИЧЕСКАЯ ОШИБКА: {e}", flush=True)
+        traceback.print_exc()
         return False
 
 
 def check_all_achievements(user):
-    logger.warning(f"[ACHIEVEMENTS] ⚙️ Запуск движка проверки для {user.id}")
+    print(f"[ACHIEVEMENTS] ⚙️ Запуск движка проверки для {user.id}", flush=True)
     new_unlocks = []
 
     try:
@@ -93,18 +84,19 @@ def check_all_achievements(user):
         if _calculate_total_fat_loss_kg(user) >= 1.0:
             if grant_achievement(user, "fat_loss_start"): new_unlocks.append("fat_loss_start")
 
-        if user.own_group or user.groups.first():
+        if getattr(user, 'own_group', None) or user.groups.first():
             if grant_achievement(user, "squad_join"): new_unlocks.append("squad_join")
 
     except Exception as e:
-        logger.error(f"[ACHIEVEMENTS] 💥 Ошибка в check_all_achievements: {e}")
+        print(f"[ACHIEVEMENTS] 💥 Ошибка в check_all_achievements: {e}", flush=True)
+        traceback.print_exc()
 
     return new_unlocks
 
 
 def _check_first_meal(user):
     count = MealLog.query.filter_by(user_id=user.id).count()
-    logger.warning(f"[ACHIEVEMENTS] У юзера {user.id} записей еды: {count}")
+    print(f"[ACHIEVEMENTS] У юзера {user.id} записей еды: {count}", flush=True)
     return count > 0
 
 
@@ -118,13 +110,16 @@ def _calculate_total_fat_loss_kg(user):
     if not logs: return 0.0
 
     activities = Activity.query.filter_by(user_id=user.id).all()
-    act_map = {a.date: (a.active_kcal or 0) for a in activities}  # Безопасное извлечение
+    # ИСПРАВЛЕНИЕ ЗДЕСЬ: (a.active_kcal or 0) защищает от NoneType TypeError
+    act_map = {a.date: (a.active_kcal or 0) for a in activities}
 
-    # Берем метаболизм из последнего замера тела
-    latest_analysis = BodyAnalysis.query.filter_by(user_id=user.id).order_by(BodyAnalysis.timestamp.desc()).first()
-    bmr = latest_analysis.metabolism if latest_analysis and latest_analysis.metabolism else 2000
+    bmr = user.metabolism or 2000
 
-    # Безопасное извлечение kcal (защита от None, если в базе есть пустые значения)
-    total_deficit = sum([max(0, (bmr + act_map.get(d, 0)) - (kcal or 0)) for d, kcal in logs])
+    total_deficit = 0
+    for d, kcal in logs:
+        active = act_map.get(d, 0)
+        daily_def = (bmr + active) - kcal
+        if daily_def > 0:
+            total_deficit += daily_def
 
     return total_deficit / 7700.0
