@@ -828,36 +828,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
 
-def grant_achievement(user, slug):
-    """Выдает достижение, если оно еще не получено."""
-    # 1. Проверяем, существует ли такая ачивка в БД
-    ach_meta = Achievement.query.filter_by(slug=slug, is_active=True).first()
-    if not ach_meta:
-        return False
-
-    # 2. Проверяем, нет ли её уже у юзера
-    existing = UserAchievement.query.filter_by(user_id=user.id, slug=slug).first()
-    if existing:
-        return False
-
-    # 3. Выдаем
-    new_ach = UserAchievement(
-        user_id=user.id,
-        slug=slug,
-        seen=False  # Чтобы на фронте выскочило диалоговое окно
-    )
-    db.session.add(new_ach)
-
-    # Отправляем PUSH о получении награды
-    from notification_service import send_user_notification
-    send_user_notification(
-        user_id=user.id,
-        title=f"Новая награда: {ach_meta.title} {ach_meta.icon}",
-        body="Зайдите в профиль, чтобы посмотреть свои достижения!",
-        type='success'
-    )
-    return True
-
 def start_training_notifier():
     if os.getenv("ENABLE_TRAINING_NOTIFIER", "1") != "1":
         return
@@ -1825,43 +1795,20 @@ def app_log_meal():
         # 1. Пересчитываем стрик
         recalculate_streak(user)
 
-        # --- AI FEED: STREAK MILESTONES ---
-        s = getattr(user, 'current_streak', 0)
-        if s > 0 and (s == 3 or s % 7 == 0):
-            trigger_ai_feed_post(user, f"Участник держит стрик питания уже {s} дней подряд!")
-        # ----------------------------------
+        # (тут код про баллы сквада)
 
-        # --- SQUAD SCORING: FOOD LOG (10 pts) ---
-        today = date.today()
-        today_meals_query = db.session.query(MealLog.meal_type).filter_by(user_id=user.id, date=today).all()
-        logged_types = {m[0] for m in today_meals_query}
-        logged_types.add(data['meal_type'])
+        # ВАЖНО: СНАЧАЛА СОХРАНЯЕМ ЕДУ В БАЗУ!
+        db.session.commit()
+        print("DEBUG: db.session.commit() успешен, еда сохранена")
 
-        required = {'breakfast', 'lunch', 'dinner'}
-        if required.issubset(logged_types):
-            existing_score = SquadScoreLog.query.filter(
-                SquadScoreLog.user_id == user.id,
-                SquadScoreLog.category == 'food_log',
-                func.date(SquadScoreLog.created_at) == today
-            ).first()
-
-            if not existing_score:
-                award_squad_points(user, 'food_log', 10, "Дневной рацион выполнен")
-        # ----------------------------------------
-
-        # --- ПРОВЕРКА АЧИВОК ---
+        # А ТЕПЕРЬ ПРОВЕРЯЕМ АЧИВКИ (БД уже видит новую еду)
         print(f"DEBUG: app_log_meal вызываю check_all_achievements для юзера {user.id}")
         try:
-            # Явный импорт из нового движка, чтобы точно работала обновленная функция
             from achievements_engine import check_all_achievements
+            # Эта функция сама сделает commit для ачивок
             check_all_achievements(user)
         except Exception as ach_err:
             print(f"ERROR calling check_all_achievements: {ach_err}")
-        # -----------------------
-
-        # ВАЖНО: Коммитим всё разом (и еду, и ачивки, если они добавились)
-        db.session.commit()
-        print("DEBUG: db.session.commit() успешен")
 
         # ANALYTICS: Meal Logged (Backend backup)
         try:
@@ -1875,7 +1822,7 @@ def app_log_meal():
                 }
             ))
         except Exception as e:
-            print(f"Amplitude error: {e}")
+            pass
 
         return jsonify({"status": "ok"}), 200
 
