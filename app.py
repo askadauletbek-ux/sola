@@ -1229,18 +1229,41 @@ def _month_deltas(user):
 @app.errorhandler(404)
 def not_found_error(error):
     """Обработчик для ошибки 404 (страница не найдена)."""
+    if request.headers.get('Accept') == 'application/json' or request.path.startswith('/api/'):
+        return jsonify({"ok": False, "error": "Запрашиваемый ресурс не найден (404)."}), 404
     return render_template('errors/404.html'), 404
 
 @app.errorhandler(403)
 def forbidden_error(error):
     """Обработчик для ошибки 403 (доступ запрещен)."""
+    if request.headers.get('Accept') == 'application/json' or request.path.startswith('/api/'):
+        return jsonify({"ok": False, "error": "Доступ запрещен (403)."}), 403
     return render_template('errors/403.html'), 403
 
 @app.errorhandler(500)
 def internal_error(error):
     """Обработчик для ошибки 500 (внутренняя ошибка сервера)."""
-    # Важно откатить сессию, чтобы избежать "зависших" транзакций в БД
     db.session.rollback()
+    app.logger.error(f"Server Error (500): {str(error)}")
+    if request.headers.get('Accept') == 'application/json' or request.path.startswith('/api/'):
+        return jsonify({
+            "ok": False,
+            "error": "Сервис временно недоступен. Мы уже работаем над устранением проблемы.",
+            "error_code": "ERR_500"
+        }), 500
+    return render_template('errors/500.html'), 500
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    """Глобальный перехватчик всех остальных исключений (предотвращает краш приложения)."""
+    db.session.rollback()
+    app.logger.error(f"Unhandled Exception: {str(e)}")
+    if request.headers.get('Accept') == 'application/json' or request.path.startswith('/api/'):
+        return jsonify({
+            "ok": False,
+            "error": "Произошла непредвиденная ошибка сервера. Пожалуйста, попробуйте позже.",
+            "error_code": "ERR_UNHANDLED"
+        }), 500
     return render_template('errors/500.html'), 500
 # ------------------ ROUTES ------------------
 
