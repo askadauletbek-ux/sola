@@ -91,6 +91,19 @@ load_dotenv()
 amplitude = Amplitude(api_key=os.getenv("AMPLITUDE_API_KEY", "c9572b73ece4f73786a764fa197c2161"))
 
 
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+# Инициализация Sentry до создания app
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=0.5, # Собирает 50% транзакций для оценки производительности
+        profiles_sample_rate=0.5,
+    )
+
 app = Flask(__name__)
 
 # Настройка лимитов (базовое хранение в памяти)
@@ -461,10 +474,6 @@ def _send_telegram(chat_id: str, text: str):
 
 
 def _send_mobile_push(fcm_token: str, title: str, body: str, data: dict = None):
-    """
-    Отправляет PUSH-уведомление через FCM.
-    """
-    # Проверяем, что токен есть и Firebase Admin SDK инициализирован
     if not fcm_token or not firebase_admin._apps:
         return False
 
@@ -479,13 +488,24 @@ def _send_mobile_push(fcm_token: str, title: str, body: str, data: dict = None):
 
     try:
         response = messaging.send(message)
-        print(f"Successfully sent push notification: {response}")
         return True
+    except messaging.UnregisteredError:
+        # Токен протух (пользователь удалил приложение) — очищаем его в БД
+        print(f"Token unregistered. Removing from DB: {fcm_token}")
+        try:
+            from models import User, db
+            user = User.query.filter_by(fcm_device_token=fcm_token).first()
+            if user:
+                user.fcm_device_token = None
+                db.session.commit()
+        except Exception as db_err:
+            print(f"DB Error while removing dead token: {db_err}")
+        return False
     except Exception as e:
         print(f"Error sending push notification: {e}")
-        # ВАЖНО: Если ошибка 'InvalidRegistrationToken',
-        # токен протух, и его нужно удалить из БД (user.fcm_device_token = None).
-        # (Эту логику можно добавить позже)
+        # Отправляем ошибку в Sentry для мониторинга
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return False
 
 
@@ -7100,9 +7120,31 @@ app.register_blueprint(support_bp, url_prefix='/api/support')
 
 @app.route('/files/<path:filename>')
 def serve_file(filename):
-    """Отдаёт загруженный файл из БД."""
+    """Отдаёт файл с выгрузкой на жесткий диск и жестким кэшированием."""
+    upload_dir = app.config.get('UPLOAD_FOLDER', 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+
+    # 1. Если файл уже выгружен на диск — отдаем напрямую (в разы быстрее, чем из БД)
+    if os.path.exists(filepath):
+        response = make_response(send_file(filepath))
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable' # Кэш на 1 год
+        return response
+
+    # 2. Если на диске нет, достаем BLOB из базы
     f = UploadedFile.query.filter_by(filename=filename).first_or_404()
-    return send_file(BytesIO(f.data), mimetype=f.content_type)
+
+    # 3. Выгружаем на диск, чтобы в следующий раз Nginx или этот же код отдал его мгновенно
+    try:
+        with open(filepath, 'wb') as disk_file:
+            disk_file.write(f.data)
+    except Exception as e:
+        app.logger.error(f"Не удалось сохранить файл на диск: {e}")
+
+    # 4. Отдаем файл в первый раз из памяти
+    response = make_response(send_file(BytesIO(f.data), mimetype=f.content_type))
+    response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
 
 @app.route('/ai-instructions')
 @login_required
@@ -8731,6 +8773,16 @@ def admin_sales_report():
         chart_labels=json.dumps(chart_labels),
         chart_revenue=json.dumps(chart_revenue)
     )
+
+@app.route('/api/app_config', methods=['GET'])
+def get_app_config():
+    return jsonify({
+        "ok": True,
+        "min_version": "1.0.0", # Минимально допустимая версия
+        "latest_version": "1.0.2",
+        "force_update_required": False, # Включите True, когда сделаете ломающие изменения
+        "maintenance_mode": False # На случай, если вы чините сервер
+    })
 
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
