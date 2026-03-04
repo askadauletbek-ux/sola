@@ -3,12 +3,9 @@ import os
 from apscheduler.schedulers.blocking import BlockingScheduler
 from zoneinfo import ZoneInfo
 
-# Импортируем ваше приложение и функции
-from app import create_app
+# Импортируем готовый объект app напрямую из вашего app.py
+from app import app
 from meal_reminders import _tick as meal_tick
-
-# Инициализируем Flask-приложение (чтобы был доступ к БД)
-app = create_app()
 
 
 def run_meal_jobs():
