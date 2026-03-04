@@ -22,3 +22,4 @@ jobs:
             pip install -r requirements.txt
             # flask db upgrade
             systemctl restart health_app
+            systemctl restart sola-scheduler
