@@ -13,7 +13,7 @@ from models import User, UserSettings, MealReminderLog
 # Фиксированные времена (по времени сервера, Asia/Almaty)
 MEAL_SCHEDULE = {
     "breakfast": ("🍳 Завтрак", "08:00"),
-    "lunch": ("🍲 Обед", "12:00"),
+    "lunch": ("🍲 Обед", "10:35"),
     "dinner": ("🍝 Ужин", "18:00"),
 }
 
