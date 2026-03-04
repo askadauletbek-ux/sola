@@ -794,15 +794,15 @@ def _notification_worker():
         finally:
             db.session.remove()
 
-def create_app():
-    app = Flask(__name__)
-
-    with app.app_context():
-        # Автозапуск напоминалок по приёмам пищи
-        start_meal_scheduler(app)
-        start_streak_scheduler(app) # <-- Добавлено
-
-    return app
+# def create_app():
+#     app = Flask(__name__)
+#
+#     with app.app_context():
+#         # Автозапуск напоминалок по приёмам пищи
+#         start_meal_scheduler(app)
+#         start_streak_scheduler(app) # <-- Добавлено
+#
+#     return app
 
 def get_effective_user_settings(u):
     from models import UserSettings, db
@@ -5084,8 +5084,6 @@ def admin_delete_achievement(aid):
         flash("Достижение удалено.", "success")
     return redirect(url_for("admin_achievements"))
 
-
-# ⚠️ ВАЖНО: ЗАМЕНИТЕ ВАШИ СТАРЫЕ API-МАРШРУТЫ ДЛЯ АЧИВОК НА ЭТИ:
 
 @app.route('/api/achievements', methods=['GET'])
 @login_required
