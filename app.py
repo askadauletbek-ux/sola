@@ -879,7 +879,7 @@ with app.app_context():
         except Exception as e:
             print(f"[meal_scheduler] scheduler error: {e}")  # <-- Добавили лог ошибки
 
-    start_training_notifier()
+    # start_training_notifier()
 
 
 
