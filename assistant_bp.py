@@ -215,7 +215,7 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
             "require_data": True,
             "full_text": msg,
             "type": "require_data",
-            "actions": [{"label": "📸 Загрузить замеры", "route": "/scan"}]
+            "actions": [{"label": "📸 Загрузить замеры", "route": "/weight"}]
         }
 
     # --- ПОДСТАНОВКА ДЕФОЛТОВ (Если force_basic=True) ---
