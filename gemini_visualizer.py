@@ -17,55 +17,50 @@ MODEL_NAME = "gemini-2.5-flash-image"
 
 def _build_prompt(sex: str, metrics: Dict[str, float], variant_label: str, scene_id: str) -> str:
     """
-    Финальная версия промпта, использующая унифицированные ключи height и weight.
+    Финальная версия промпта со строгим контролем масштаба, фона и ИМТ.
     """
-    # Теперь используем ключи 'height' и 'weight', как в основной модели BodyAnalysis
-    height = metrics.get("height")
-    weight = metrics.get("weight")
-    fat_pct = metrics.get("fat_pct")
-    muscle_pct = metrics.get("muscle_pct")
+    height = metrics.get("height", 170)
+    weight = metrics.get("weight", 70)
+    fat_pct = metrics.get("fat_pct", 20)
+    muscle_pct = metrics.get("muscle_pct", 40)
+    bmi = metrics.get("bmi", 22.0)
 
     if sex == 'female':
         clothing_description = "Plain black sports bra (top) and plain black athletic shorts. Simple, functional, no logos, no embellishments. Matte fabric."
     else:  # male
         clothing_description = "Plain black athletic shorts, bare torso. Simple, functional, no logos, no embellishments. Matte fabric."
 
-    photo_style = "Hyper-realistic, clinical, high-fidelity studio photograph. Captured with a professional medium-format camera (e.g., Hasselblad H6D-100c) and a prime 120mm macro lens set to f/11 for maximum depth of field and sharpness across the entire body. RAW photo, unedited, unprocessed."
-
     return f"""
-# PRIMARY OBJECTIVE: ABSOLUTE PHOTOREALISM & SCIENTIFIC DATA ACCURACY
-The output MUST be a physically accurate, hyper-realistic photographic representation of the human body strictly based on the provided metrics. 
+# PRIMARY OBJECTIVE
+You are an expert clinical AI visualizer. Your task is to perform a highly accurate image-to-image translation. 
+You must modify the body composition of the person in the provided reference image STRICTLY based on the physical metrics below.
 
 # SCENE SETUP
 - **Scene ID:** {scene_id}
-- **Style:** {photo_style}
-- **Background:** Pure white (#FFFFFF) seamless studio cyclorama.
-- **Camera:** Static, eye-level, full-height shot. 120mm focal length.
-- **Lighting:** Ultra-flat, high-key diffused studio lighting. No shadows.
 
-# COMPOSITION
-- **Visibility:** The ENTIRE subject (head to feet) MUST be fully visible.
-- **Margins:** 5-10% white margin above head and below feet.
-- **NO CROPPING:** Do not crop hair, fingers, or toes.
+# STRICT CONSISTENCY RULES (CRITICAL)
+1. **Scale & Framing:** The subject MUST remain the EXACT SAME SIZE and at the EXACT SAME DISTANCE from the camera as in the reference image. DO NOT zoom in or out. Head and feet MUST remain exactly where they are in the original.
+2. **Background & Environment:** PRESERVE the original background, room, shadows, and lighting completely. Do NOT generate a white studio background unless the original photo is already white. Modifying the background is strictly prohibited.
+3. **Pose:** The pose MUST remain absolutely identical to the original image.
+4. **Clothing:** {clothing_description}
+5. **Identity:** The face MUST be an EXACT, UNALTERED match to the provided avatar image.
 
-# SUBJECT & IDENTITY
-- **Pose:** Strict anatomical A-pose.
-- **Identity:** The face MUST be an EXACT, UNALTERED match to the provided avatar image.
-- **Clothing:** {clothing_description}
+# BODY SPECIFICATION FOR "{variant_label.upper()}" STATE
+- **Sex:** {sex}
+- **Height:** {height} cm
+- **Weight:** {weight} kg
+- **BMI (Body Mass Index):** {bmi} (CRUCIAL: strictly reflect this BMI in the body volume and width)
+- **Body Fat:** {fat_pct}% (Determines softness, curves, and subcutaneous fat visibility)
+- **Muscle Mass:** {muscle_pct}% (Determines muscle volume and definition)
 
-# BODY SPECIFICATION FOR "{variant_label}"
-- **sex:** {sex}
-- **height_cm:** {height}
-- **weight_kg:** {weight}
-- **fat_percent:** {fat_pct}% (LITERAL translation to subcutaneous fat. High = softer contours, Low = tight skin).
-- **muscle_percent:** {muscle_pct}% (LITERAL translation to muscle volume and definition).
+# REALISM & ANATOMY (DO NOT BEAUTIFY)
+- This is a clinical visualization. DO NOT artificially beautify, slim down, or add unrealistic muscle definition unless the Body Fat % is very low.
+- If BMI is high, accurately and realistically depict the excess body mass and volume.
+- If this is the "CURRENT" state with high fat, it MUST look softer and heavier than the "TARGET" state.
+- Skin Texture: Microscopic detail, pores, natural variations, no airbrushing.
+- Gravity: Realistic effects on soft tissues (fat) and muscles.
 
-# REALISM DIRECTIVES
-- **Skin Texture:** Microscopic detail: pores, natural variations, no airbrushing.
-- **Gravity:** Realistic effects on soft tissues (fat) and muscles.
-- **Proportions:** Anthropometrically correct for the specified height and sex.
-
-The final output must be an authentic, unedited, high-resolution photograph.
+Output MUST be an authentic, unedited, high-resolution synthesized photograph matching the input dimensions and framing perfectly.
 """.strip()
 
 def _extract_first_image_bytes(response) -> bytes:
@@ -97,7 +92,15 @@ def _compute_pct(value: float, weight: float) -> float:
         return 0.0
     return round(100.0 * float(value) / float(weight), 2)
 
-def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> Tuple[str, str]:
+def _compute_bmi(weight: float, height: float) -> float:
+    """Рассчитывает ИМТ для передачи в промпт ИИ."""
+    if not weight or not height or height <= 0:
+        return 0.0
+    return round(weight / ((height / 100.0) ** 2), 1)
+
+
+def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, float], metrics_target: Dict[str, float]) -> \
+Tuple[str, str]:
     """
     Генерирует изображения До и После, нормализуя входные данные для промпта.
     """
@@ -110,22 +113,32 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
     scene_id = f"scene-{uuid.uuid4().hex}"
 
     # 1. Подготовка ТЕКУЩИХ метрик (Точка А)
-    # Приводим к ключам, которые ожидает _build_prompt
+    curr_height = metrics_current.get("height") or getattr(user, "height", 170)
     curr_weight = metrics_current.get("weight", 0)
     metrics_current["fat_pct"] = _compute_pct(metrics_current.get("fat_mass", 0), curr_weight)
-    # Если мышечная масса не передана, берем среднее (например, 40% от веса)
+
     curr_muscle = metrics_current.get("muscle_mass") or (curr_weight * 0.4)
     metrics_current["muscle_pct"] = _compute_pct(curr_muscle, curr_weight)
 
+    # Считаем точный ИМТ для Точки А
+    metrics_current["bmi"] = _compute_bmi(curr_weight, curr_height)
+
     # 2. Подготовка ЦЕЛЕВЫХ метрик (Точка Б)
-    # В metrics_target от бэкенда приходят ключи weight_kg и height_cm
+    tgt_height = metrics_target.get("height_cm") or curr_height
     tgt_weight = metrics_target.get("weight_kg", 0)
     tgt_data_for_prompt = {
-        "height": metrics_target.get("height_cm"),
+        "height": tgt_height,
         "weight": tgt_weight,
         "fat_pct": metrics_target.get("fat_pct"),
-        "muscle_pct": metrics_target.get("muscle_pct")
+        "muscle_pct": metrics_target.get("muscle_pct"),
+        # Считаем точный ИМТ для Точки Б
+        "bmi": _compute_bmi(tgt_weight, tgt_height)
     }
+
+    # Жесткая консистентность генерации (минимум рандома)
+    generation_config = types.GenerateContentConfig(
+        temperature=0.0,
+    )
 
     # Генерация текущего состояния
     prompt_curr = _build_prompt(user.sex or "male", metrics_current, "current", scene_id)
@@ -133,7 +146,11 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
         types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
         types.Part(text=prompt_curr),
     ]
-    resp_curr = client.models.generate_content(model=MODEL_NAME, contents=contents_curr)
+    resp_curr = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_curr,
+        config=generation_config
+    )
     curr_png = _extract_first_image_bytes(resp_curr)
 
     # Генерация целевого состояния
@@ -142,7 +159,11 @@ def generate_for_user(user, avatar_bytes: bytes, metrics_current: Dict[str, floa
         types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=avatar_bytes)),
         types.Part(text=prompt_tgt),
     ]
-    resp_tgt = client.models.generate_content(model=MODEL_NAME, contents=contents_tgt)
+    resp_tgt = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_tgt,
+        config=generation_config
+    )
     tgt_png = _extract_first_image_bytes(resp_tgt)
 
     # Сохранение в БД
