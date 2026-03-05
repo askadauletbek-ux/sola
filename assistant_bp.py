@@ -659,6 +659,11 @@ def handle_chat():
         if current_weight_estimated < 0: current_weight_estimated = 0
         if estimated_current_fat_mass < 0: estimated_current_fat_mass = 0
 
+        # Вычисляем примерный процент жира от текущего расчетного веса
+        estimated_fat_percentage = 0
+        if current_weight_estimated > 0:
+            estimated_fat_percentage = (estimated_current_fat_mass / current_weight_estimated) * 100
+
         # 4. Формируем специальный Промпт для ИИ, чтобы он опирался на эти данные
         ai_system_prompt = f"""
                 Ты — спортивный аналитик Kilo. Пользователь спрашивает о своих показателях.
@@ -666,7 +671,7 @@ def handle_chat():
                 ОФИЦИАЛЬНЫЕ ДАННЫЕ ПРОГРЕССА (ЦЕЛЬ — СЖИГАНИЕ ЖИРА):
                 - Начальный жир (Точка А): {round(initial_fat_mass, 1)} кг
                 - Целевой жир: {round(goal_fat_mass, 1)} кг
-                - Текущий жир: {round(estimated_current_fat_mass, 1)} кг
+                - Текущий жир: {round(estimated_current_fat_mass, 1)} кг (примерно {round(estimated_fat_percentage, 1)}%)
 
                 ДИНАМИКА:
                 С момента последнего взвешивания накоплен дефицит калорий: {round(total_accumulated_deficit)} ккал.
@@ -686,7 +691,7 @@ def handle_chat():
         # Передаем payload с правильными ключами для рендера в sola_ai.dart
         payload = {
             "weight": round(current_weight_estimated, 1),
-            "fat": round(estimated_current_fat_mass, 1),
+            "fat": round(estimated_fat_percentage, 1),  # <-- Теперь здесь процент жира
             "muscle": current_ba.muscle_mass,
             "start_weight": round(initial_fat_mass, 1),
             "goal_weight": round(goal_fat_mass, 1),
