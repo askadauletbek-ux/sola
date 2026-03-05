@@ -597,14 +597,15 @@ def handle_chat():
 
         user = User.query.get(user_id)
 
-        # Получаем стартовый анализ для Точки А
+        # 1. Получаем начальные и целевые точки по жиру
         initial_analysis = db.session.get(BodyAnalysis,
-                                          user.initial_body_analysis_id) if user.initial_body_analysis_id else current_ba
+                                          user.initial_body_analysis_id) if user.initial_body_analysis_id else None
 
-        start_weight = initial_analysis.weight if initial_analysis and initial_analysis.weight else user.start_weight
-        goal_weight = user.weight_goal
+        last_measured_fat_mass = current_ba.fat_mass if current_ba.fat_mass is not None else 0
+        initial_fat_mass = initial_analysis.fat_mass if initial_analysis and initial_analysis.fat_mass is not None else last_measured_fat_mass
+        goal_fat_mass = user.fat_mass_goal or 0
 
-        # Расчет дефицита с момента последнего замера (как в Dashboard)
+        # 2. Расчет дефицита с момента последнего замера (аналогично Dashboard)
         start_datetime = current_ba.timestamp
         today_date = date.today()
 
@@ -642,29 +643,57 @@ def handle_chat():
                 if daily_deficit > 0:
                     total_accumulated_deficit += daily_deficit
 
-        estimated_burned_kg = total_accumulated_deficit / 7700
+        # 3. Вычисление динамики сброшенного жира
+        estimated_burned_since_last_measurement_kg = total_accumulated_deficit / 7700
 
-        current_weight_estimated = (current_ba.weight or 0) - estimated_burned_kg
-        current_fat_estimated = (current_ba.fat_mass or 0) - estimated_burned_kg
+        estimated_current_fat_mass = last_measured_fat_mass - estimated_burned_since_last_measurement_kg
+        total_lost_so_far_kg = initial_fat_mass - estimated_current_fat_mass
+        total_fat_to_lose_kg = initial_fat_mass - goal_fat_mass
 
+        percentage = 0
+        if total_fat_to_lose_kg > 0:
+            percentage = (total_lost_so_far_kg / total_fat_to_lose_kg) * 100
+        percentage = min(100, max(0, percentage))
+
+        current_weight_estimated = (current_ba.weight or 0) - estimated_burned_since_last_measurement_kg
         if current_weight_estimated < 0: current_weight_estimated = 0
-        if current_fat_estimated < 0: current_fat_estimated = 0
+        if estimated_current_fat_mass < 0: estimated_current_fat_mass = 0
 
-        ba_sum_estimated = f"Рост: {current_ba.height}, Вес: {round(current_weight_estimated, 1)}, Жир: {round(current_fat_estimated, 1)}, Мышцы: {current_ba.muscle_mass}, Метаболизм: {current_ba.metabolism}"
+        # 4. Формируем специальный Промпт для ИИ, чтобы он опирался на эти данные
+        ai_system_prompt = f"""
+                Ты — спортивный аналитик Kilo. Пользователь спрашивает о своих показателях.
+
+                ОФИЦИАЛЬНЫЕ ДАННЫЕ ПРОГРЕССА (ЦЕЛЬ — СЖИГАНИЕ ЖИРА):
+                - Начальный жир (Точка А): {round(initial_fat_mass, 1)} кг
+                - Целевой жир: {round(goal_fat_mass, 1)} кг
+                - Текущий жир: {round(estimated_current_fat_mass, 1)} кг
+
+                ДИНАМИКА:
+                С момента последнего взвешивания накоплен дефицит калорий: {round(total_accumulated_deficit)} ккал.
+                Это эквивалентно дополнительному сжиганию ~{round(estimated_burned_since_last_measurement_kg, 2)} кг жира.
+                Общий прогресс: сброшено {round(total_lost_so_far_kg, 1)} кг жира из {round(total_fat_to_lose_kg, 1)} кг (выполнено {round(percentage)}%).
+                Текущий вес: {round(current_weight_estimated, 1)} кг.
+
+                ТВОЯ ЗАДАЧА:
+                Отвечай коротко (2-3 предложения), поддерживающе. ОБЯЗАТЕЛЬНО назови точные цифры: сколько жира уже сброшено, и сколько дополнительно сжег накопленный дефицит. Похвали пользователя за соблюдение диеты. Не придумывай данные, бери только из сводки выше.
+                """
 
         reply = _call_openai([
-            {"role": "system",
-             "content": "Ты фитнес-аналитик Kilo. Отвечай МАКСИМАЛЬНО коротко (1-2 предложения). Только сухие факты о показателях пользователя. Без лишней воды. Если есть сдвиг к цели — подбодри."},
-            {"role": "user",
-             "content": f"Мои данные: {ba_sum_estimated}. Моя цель: {goal_weight} кг. Вопрос: {user_message}"}
+            {"role": "system", "content": ai_system_prompt},
+            {"role": "user", "content": f"Прокомментируй мои текущие показатели. Вопрос: {user_message}"}
         ])
 
+        # Передаем payload с правильными ключами для рендера в sola_ai.dart
         payload = {
             "weight": round(current_weight_estimated, 1),
-            "fat": round(current_fat_estimated, 1),
+            "fat": round(estimated_current_fat_mass, 1),
             "muscle": current_ba.muscle_mass,
-            "start_weight": start_weight,
-            "goal_weight": goal_weight
+            "start_weight": round(initial_fat_mass, 1),
+            "goal_weight": round(goal_fat_mass, 1),
+            "initial_kg": round(initial_fat_mass, 1),
+            "goal_kg": round(goal_fat_mass, 1),
+            "current_kg": round(estimated_current_fat_mass, 1),
+            "percentage": percentage
         }
 
         ai_msg = {
