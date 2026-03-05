@@ -101,11 +101,6 @@ def _format_diet_summary(diet_obj):
     return json.dumps(summary, ensure_ascii=False)
 
 
-def _format_body_summary(ba_obj):
-    if not ba_obj: return "Данные анализа отсутствуют."
-    return f"Рост: {ba_obj.height}, Вес: {ba_obj.weight}, Жир: {ba_obj.fat_mass}, Мышцы: {ba_obj.muscle_mass}, Метаболизм: {ba_obj.metabolism}"
-
-
 def _call_openai(messages, temperature=0.5, max_tokens=1000, json_mode=False):
     try:
         kwargs = {
@@ -173,30 +168,24 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
     metrics = context['metrics']
     activity = context['activity']
 
-    # --- ПОИСК ДАННЫХ (Расширенный) ---
-    # Пытаемся найти вес хоть где-то
+    # Пытаемся найти вес
     weight = metrics.get('weight')
     if not weight:
-        # Ищем в WeightLog
         last_log = WeightLog.query.filter_by(user_id=user.id).order_by(WeightLog.date.desc()).first()
         if last_log:
             weight = last_log.weight
     if not weight:
-        # Ищем в стартовом весе профиля
         weight = profile.get('start_weight')
 
     height = metrics.get('height')
     age = profile.get('age')
     gender = profile.get('gender', 'unknown')
 
-    # --- ПРОВЕРКА НА ПОЛНОТУ ДАННЫХ ---
     missing_data = []
     if not weight: missing_data.append("вес")
     if not height: missing_data.append("рост")
-    # Возраст менее критичен, можно дефолт, но лучше знать
     if not age: missing_data.append("возраст")
 
-    # Если данных нет и не просили "базовую" -> просим данные
     if missing_data and not force_basic:
         missing_str = ", ".join(missing_data)
         msg = (
@@ -205,7 +194,6 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
             "Если хочешь, я могу составить **базовый рацион** на основе усредненных показателей. "
             "Просто напиши: **«Составь базовую диету»**."
         )
-        # Добавляем это сообщение в историю, чтобы бот "помнил" отказ
         chat_history = session.get('chat_history', [])
         chat_history.append({
             "role": "assistant",
@@ -223,7 +211,6 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
             "actions": [{"label": "📸 Загрузить замеры", "route": "/weight"}]
         }
 
-    # --- ПОДСТАНОВКА ДЕФОЛТОВ (Если force_basic=True) ---
     is_estimation = False
     if not weight:
         weight = 70.0 if gender != 'female' else 60.0
@@ -241,18 +228,15 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         age = 30
         is_estimation = True
 
-    # 1.2 Расчет BMR (Базовый обмен веществ)
     bmr = metrics.get('metabolism')
     if not bmr:
-        # Формула Миффлина-Сан Жеора
         if gender == 'female':
             bmr = (10 * weight) + (6.25 * height) - (5 * age) - 161
         else:
             bmr = (10 * weight) + (6.25 * height) - (5 * age) + 5
 
-    # 1.3 Уровень активности (TDEE)
     avg_steps = activity.get('avg_weekly_steps', 0)
-    activity_factor = 1.2  # Сидячий (до 5000 шагов)
+    activity_factor = 1.2
     if avg_steps > 12000:
         activity_factor = 1.55
     elif avg_steps > 7000:
@@ -260,17 +244,16 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
 
     tdee = int(bmr * activity_factor)
 
-    # 1.4 Корректировка под цель
     goal_type = "maintain"
     target_calories = tdee
 
     if user.fat_mass_goal:
         goal_type = "lose_fat"
-        target_calories = int(tdee * 0.85)  # Дефицит 15%
+        target_calories = int(tdee * 0.85)
         if target_calories < bmr: target_calories = int(bmr)
     elif user.muscle_mass_goal:
         goal_type = "gain_muscle"
-        target_calories = int(tdee * 1.10)  # Профицит 10%
+        target_calories = int(tdee * 1.10)
 
     goal_desc_map = {
         "lose_fat": f"Сжигание жира. Дефицит калорий (Цель: {target_calories} ккал). Высокий белок.",
@@ -279,16 +262,13 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
     }
     goal_instruction = goal_desc_map.get(goal_type)
 
-    # Добавляем предупреждение для ИИ, если данные примерные
     estimation_note = ""
     if is_estimation:
         estimation_note = (
-            "ВНИМАНИЕ: У пользователя нет точных данных (рост/вес/возраст). "
-            "Использованы средние значения. В обосновании (justification) ОБЯЗАТЕЛЬНО укажи, "
-            "что это **базовый рацион**, так как точные данные отсутствуют, и он может быть не идеален."
+            "ВНИМАНИЕ: У пользователя нет точных данных. Использованы средние значения. "
+            "В обосновании ОБЯЗАТЕЛЬНО укажи, что это базовый рацион."
         )
 
-    # 2. Промпт
     prompt = f"""
     Роль: Ты — профессиональный спортивный диетолог Kilo.
     Клиент: {profile['name']}.
@@ -302,18 +282,16 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
     Составь подробный рацион на 1 день, строго попадая в {target_calories} ккал (+/- 50 ккал).
 
     СТРОГИЕ ПРАВИЛА:
-    1. ЗАПРЕЩЕНО писать "Блюдо", "Dish", "Еда". Пиши конкретные названия (напр. "Омлет с шпинатом", "Куриное филе гриль").
-    2. ЗАПРЕЩЕНО указывать вес "0г" или "0g". Вес должен быть реалистичным (напр. 200, 150).
-    3. Калорийность каждого блюда должна быть > 0.
-    4. Сумма калорий ВСЕХ блюд должна быть равна {target_calories}.
+    1. ЗАПРЕЩЕНО писать "Блюдо", "Dish", "Еда". Пиши конкретные названия.
+    2. ЗАПРЕЩЕНО указывать вес "0г".
+    3. Сумма калорий ВСЕХ блюд должна быть равна {target_calories}.
 
     СТРУКТУРА ОТВЕТА (JSON):
     {{
-        "justification": "Обращение к клиенту по имени. Объясни выбор калорийности {target_calories}. Если данные примерные - предупреди.",
+        "justification": "Обращение к клиенту по имени. Объясни выбор калорийности.",
         "diet_plan": {{
             "breakfast": [
-                {{"name": "Овсяная каша на воде с ягодами", "grams": 250, "kcal": 300, "recipe": "Варить овсянку 10 мин, добавить..."}},
-                {{"name": "Вареное яйцо", "grams": 55, "kcal": 70, "recipe": "Варить 7 минут"}}
+                {{"name": "Овсянка", "grams": 250, "kcal": 300, "recipe": "..."}}
             ],
             "lunch": [ ... ],
             "dinner": [ ... ],
@@ -330,8 +308,7 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system",
-                 "content": "Ты диетолог. Отвечай только валидным JSON. Генерируй реальные блюда и граммовки."},
+                {"role": "system", "content": "Ты диетолог. Отвечай только валидным JSON."},
                 {"role": "user", "content": prompt}
             ],
             temperature=DIET_TEMPERATURE,
@@ -348,9 +325,7 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         if not diet_plan or diet_plan.get('total_kcal', 0) < 500:
             return {"error": "Сгенерирован некорректный план.", "code": 500}
 
-        # 3. Сохранение в БД
         Diet.query.filter_by(user_id=user.id, date=date.today()).delete()
-
         new_diet = Diet(
             user_id=user.id,
             date=date.today(),
@@ -366,7 +341,6 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         db.session.add(new_diet)
         db.session.commit()
 
-        # 4. Контекст
         menu_text = format_diet_string(diet_plan)
         final_message_text = f"{justification}\n{menu_text}"
 
@@ -385,28 +359,23 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         })
         session['chat_history'] = chat_history[-15:]
 
-        # 5. Уведомление
         send_user_notification(
             user_id=user.id,
             title="🍽️ План питания готов!",
-            body=f"Калории: {diet_plan.get('total_kcal')}. {justification[:40]}...",
+            body=f"Калории: {diet_plan.get('total_kcal')}.",
             type='success',
             data={"route": "/diet"}
         )
 
-        # 6. Аналитика
         if amplitude_instance:
             try:
                 amplitude_instance.track(BaseEvent(
                     event_type="Diet Generated AI",
                     user_id=str(user.id),
-                    event_properties={
-                        "calories": diet_plan.get('total_kcal'),
-                        "is_basic": is_estimation
-                    }
+                    event_properties={"calories": diet_plan.get('total_kcal'), "is_basic": is_estimation}
                 ))
-            except Exception as e:
-                print(f"Amplitude error: {e}")
+            except Exception:
+                pass
 
         return {
             "success": True,
@@ -446,7 +415,7 @@ def handle_chat():
     chat_history.append({"role": "user", "content": user_message})
     chat_history = chat_history[-15:]
 
-    # Очищаем историю от наших кастомных ключей (type, payload, actions) перед отправкой в OpenAI
+    # Очищаем историю от кастомных ключей перед отправкой в OpenAI
     clean_history = [{"role": m["role"], "content": m.get("content", "")} for m in chat_history]
 
     # 1. КЛАССИФИКАЦИЯ
@@ -469,12 +438,8 @@ def handle_chat():
     # СЦЕНАРИЙ 1: ГЕНЕРАЦИЯ ДИЕТЫ (С НУЛЯ)
     # =================================================================================
     if "Генерация" in classifier_text or "Generat" in classifier_text:
-
-        # Проверяем, не просит ли пользователь "базовую" диету принудительно
-        # Ключевые слова: базовая, простая, все равно, basic, без весов
         msg_lower = user_message.lower()
         force_basic = any(kw in msg_lower for kw in ["базов", "прост", "все равно", "basic", "любую", "без весов"])
-
         result = generate_diet_for_user(user_id, force_basic=force_basic)
 
         if result.get("success") or result.get("require_data"):
@@ -493,34 +458,20 @@ def handle_chat():
     # =================================================================================
     elif "Диета" in classifier_text:
         if not current_diet_obj:
-            # Если диеты нет, но пользователь о ней говорит — пробуем сгенерировать
             return jsonify({"role": "ai",
                             "content": "У вас еще нет активной диеты. Напишите 'Составь рацион', чтобы начать!"}), 200
 
         mod_system_prompt = f"""
-        Ты — Kilo, диетолог. 
-        ТЫ составил этот рацион для пользователя: {current_diet_json}.
-
-        Твоя задача: Отвечать на вопросы по этому рациону или менять его.
-        Никогда не говори "в предоставленном рационе", говори "в твоем рационе".
-
+        Ты — Kilo, диетолог. ТЫ составил этот рацион: {current_diet_json}.
+        Твоя задача: Отвечать на вопросы по рациону или менять его.
         Запрос: "{user_message}"
 
-        Верни JSON СТРОГО одного из двух типов:
-
-        ТИП 1 (Вопрос/Уточнение): "что на ужин?", "почему столько белка?".
-        {{ "action": "answer", "text": "Твой ответ от первого лица..." }}
-
-        ТИП 2 (Изменение): "не нравится", "убери рыбу", "хочу другое".
-        {{ 
-           "action": "update", 
-           "text": "Комментарий ('Хорошо, я заменил рыбу на курицу...').", 
-           "diet_plan": {{ ...полностью новая структура с учетом правок... }}
-        }}
+        Верни JSON СТРОГО:
+        ТИП 1 (Вопрос): {{"action": "answer", "text": "ответ..."}}
+        ТИП 2 (Изменение): {{"action": "update", "text": "Комментарий...", "diet_plan": {{ ...новая структура... }} }}
         """
-
-        messages = [{"role": "system", "content": mod_system_prompt}]
-        response_json_str = _call_openai(messages, temperature=0.7, max_tokens=2000, json_mode=True)
+        response_json_str = _call_openai([{"role": "system", "content": mod_system_prompt}], temperature=0.7,
+                                         max_tokens=2000, json_mode=True)
 
         if response_json_str:
             try:
@@ -556,7 +507,6 @@ def handle_chat():
                 chat_history.append({"role": "assistant", "content": final_text})
                 session['chat_history'] = chat_history
                 return jsonify({"role": "ai", "content": final_text}), 200
-
             except Exception as e:
                 logger.error(f"Diet Modify Error: {e}")
                 return jsonify({"role": "ai", "content": "Произошла ошибка при обработке запроса."}), 200
@@ -567,7 +517,7 @@ def handle_chat():
     # СЦЕНАРИЙ 3: СКАНЕР ЕДЫ
     # =================================================================================
     elif "Сканер" in classifier_text:
-        reply_text = "Хорошо, надеюсь что то вкусное, главное полезное)"
+        reply_text = "Отличная идея! Давай запишем, что ты съел. Открываю сканер еды..."
         ai_msg = {
             "role": "ai",
             "content": reply_text,
@@ -578,15 +528,30 @@ def handle_chat():
         session['chat_history'] = chat_history
         return jsonify(ai_msg), 200
 
-        # =================================================================================
-        # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ
-        # =================================================================================
+    # =================================================================================
+    # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ (Точно как на главной)
+    # =================================================================================
     elif "Показатели" in classifier_text:
+        user_obj = User.query.get(user_id)
         current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
-        if not current_ba:
+
+        start_w = user_obj.start_weight
+        goal_w = user_obj.weight_goal
+
+        # 1. Точный алгоритм получения текущего веса (как в app.py)
+        last_log = WeightLog.query.filter_by(user_id=user_id).order_by(WeightLog.date.desc(),
+                                                                       WeightLog.created_at.desc()).first()
+        if last_log:
+            curr_w = last_log.weight
+        elif current_ba and current_ba.weight:
+            curr_w = current_ba.weight
+        else:
+            curr_w = start_w
+
+        if not curr_w and not current_ba:
             ai_msg = {
                 "role": "ai",
-                "content": "У меня пока нет данных твоего анализа тела. Пожалуйста, загрузи фото с весов!",
+                "content": "У меня пока нет данных твоих замеров. Пожалуйста, зафиксируй вес или загрузи фото с весов!",
                 "type": "require_data",
                 "actions": [{"label": "📸 Загрузить замеры", "route": "/weight"}]
             }
@@ -594,21 +559,24 @@ def handle_chat():
             session['chat_history'] = chat_history
             return jsonify(ai_msg), 200
 
-        ba_sum = _format_body_summary(current_ba)
-        goal_weight = user_context['profile'].get('goal_weight')
+        # Формируем строку для ИИ
+        ba_sum = f"Текущий вес: {curr_w} кг."
+        if current_ba and current_ba.fat_mass:
+            ba_sum += f" Жир: {current_ba.fat_mass} кг."
 
         reply = _call_openai([
             {"role": "system",
-             "content": "Ты фитнес-аналитик Kilo. Отвечай МАКСИМАЛЬНО коротко (1-2 предложения). Только сухие факты о показателях пользователя. Без лишней воды. Если есть сдвиг к цели — подбодри."},
-            {"role": "user", "content": f"Мои данные: {ba_sum}. Моя цель: {goal_weight} кг. Вопрос: {user_message}"}
+             "content": "Ты фитнес-аналитик Kilo. Отвечай МАКСИМАЛЬНО коротко (1 предложение). Никакой воды, не перечисляй цифры, они будут на графике ниже. Просто коротко оцени динамику веса от старта к цели и подбодри."},
+            {"role": "user",
+             "content": f"Старт: {start_w} кг. Цель: {goal_w} кг. Сейчас: {ba_sum}. Вопрос: {user_message}"}
         ])
 
         payload = {
-            "weight": current_ba.weight,
-            "fat": current_ba.fat_mass,
-            "muscle": current_ba.muscle_mass,
-            "start_weight": user_context['profile'].get('start_weight'),
-            "goal_weight": goal_weight
+            "weight": curr_w,
+            "fat": current_ba.fat_mass if current_ba else None,
+            "muscle": current_ba.muscle_mass if current_ba else None,
+            "start_weight": start_w,
+            "goal_weight": goal_w
         }
 
         ai_msg = {
@@ -631,13 +599,11 @@ def handle_chat():
         Пользователь: {user_context['profile']['name']}.
 
         КОНТЕКСТ:
-        Пользователь сейчас придерживается этого рациона (ТЫ его составил):
+        Пользователь сейчас придерживается этого рациона:
         {current_diet_json}
 
-        Отвечай на вопросы пользователя, помогай ему придерживаться плана.
-        Будь поддерживающим и мотивирующим.
+        Отвечай на вопросы пользователя. Будь поддерживающим и мотивирующим.
         """
-        # ВАЖНО: Используем clean_history, чтобы не сломать OpenAI
         messages = [{"role": "system", "content": general_prompt}] + clean_history
         reply = _call_openai(messages, temperature=DEFAULT_TEMPERATURE)
 
