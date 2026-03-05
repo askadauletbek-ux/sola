@@ -207,7 +207,12 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         )
         # Добавляем это сообщение в историю, чтобы бот "помнил" отказ
         chat_history = session.get('chat_history', [])
-        chat_history.append({"role": "assistant", "content": msg})
+        chat_history.append({
+            "role": "assistant",
+            "content": msg,
+            "type": "require_data",
+            "actions": [{"label": "📸 Загрузить замеры", "route": "/weight"}]
+        })
         session['chat_history'] = chat_history[-15:]
 
         return {
@@ -366,7 +371,18 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         final_message_text = f"{justification}\n{menu_text}"
 
         chat_history = session.get('chat_history', [])
-        chat_history.append({"role": "assistant", "content": final_message_text})
+        chat_history.append({
+            "role": "assistant",
+            "content": final_message_text,
+            "type": "diet_generated",
+            "payload": {
+                "total_kcal": diet_plan.get('total_kcal'),
+                "protein": diet_plan.get('protein'),
+                "fat": diet_plan.get('fat'),
+                "carbs": diet_plan.get('carbs')
+            },
+            "actions": [{"label": "🍽 Смотреть меню", "route": "/meals"}]
+        })
         session['chat_history'] = chat_history[-15:]
 
         # 5. Уведомление
@@ -430,15 +446,19 @@ def handle_chat():
     chat_history.append({"role": "user", "content": user_message})
     chat_history = chat_history[-15:]
 
+    # Очищаем историю от наших кастомных ключей (type, payload, actions) перед отправкой в OpenAI
+    clean_history = [{"role": m["role"], "content": m.get("content", "")} for m in chat_history]
+
     # 1. КЛАССИФИКАЦИЯ
     CLASSIFICATION_PROMPT = """
     Определи намерение пользователя:
     1. 'Генерация' - если просит НОВЫЙ рацион с нуля ("составь диету", "хочу есть").
     2. 'Диета' - если хочет изменить ТЕКУЩУЮ диету ("убери рыбу", "что на ужин?") или обсуждает её.
     3. 'Показатели' - анализ веса, жира, прогресса.
-    4. 'Общее' - остальное.
+    4. 'Сканер' - если хочет отсканировать еду, загрузить прием пищи.
+    5. 'Общее' - остальное.
     """
-    msgs_classify = [{"role": "system", "content": CLASSIFICATION_PROMPT}] + chat_history[-1:]
+    msgs_classify = [{"role": "system", "content": CLASSIFICATION_PROMPT}] + clean_history[-1:]
     classifier_text = _call_openai(msgs_classify, temperature=0.3, max_tokens=20) or "Общее"
 
     user_context = get_full_user_context(user_id)
@@ -544,25 +564,62 @@ def handle_chat():
             return jsonify({"role": "ai", "content": "ИИ не ответил."}), 200
 
     # =================================================================================
-    # СЦЕНАРИЙ 3: ПОКАЗАТЕЛИ
+    # СЦЕНАРИЙ 3: СКАНЕР ЕДЫ
+    # =================================================================================
+    elif "Сканер" in classifier_text:
+        reply_text = "Отличная идея! Давай запишем, что ты съел. Открываю сканер еды..."
+        ai_msg = {
+            "role": "ai",
+            "content": reply_text,
+            "type": "scan_food",
+            "actions": [{"label": "📸 Открыть сканер", "route": "/scan"}]
+        }
+        chat_history.append(ai_msg)
+        session['chat_history'] = chat_history
+        return jsonify(ai_msg), 200
+
+    # =================================================================================
+    # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ
     # =================================================================================
     elif "Показатели" in classifier_text:
         current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
         if not current_ba:
-            return jsonify({"role": "ai", "content": "Нет данных анализа тела. Загрузите фото с весов!"}), 200
+            ai_msg = {
+                "role": "ai",
+                "content": "У меня пока нет данных твоего анализа тела. Пожалуйста, загрузи фото с весов!",
+                "type": "require_data",
+                "actions": [{"label": "📸 Загрузить замеры", "route": "/weight"}]
+            }
+            chat_history.append(ai_msg)
+            session['chat_history'] = chat_history
+            return jsonify(ai_msg), 200
 
         ba_sum = _format_body_summary(current_ba)
         reply = _call_openai([
             {"role": "system",
-             "content": "Ты фитнес-аналитик Kilo. Твоя задача — анализировать прогресс пользователя."},
+             "content": "Ты фитнес-аналитик Kilo. Твоя задача — анализировать прогресс пользователя. Подбадривай его!"},
             {"role": "user", "content": f"Мои данные: {ba_sum}. Вопрос: {user_message}"}
         ])
-        chat_history.append({"role": "assistant", "content": reply})
+
+        payload = {
+            "weight": current_ba.weight,
+            "fat": current_ba.fat_mass,
+            "muscle": current_ba.muscle_mass
+        }
+
+        ai_msg = {
+            "role": "ai",
+            "content": reply,
+            "type": "metrics_summary",
+            "payload": payload
+        }
+
+        chat_history.append(ai_msg)
         session['chat_history'] = chat_history
-        return jsonify({"role": "ai", "content": reply}), 200
+        return jsonify(ai_msg), 200
 
     # =================================================================================
-    # СЦЕНАРИЙ 4: ОБЩИЙ ЧАТ
+    # СЦЕНАРИЙ 5: ОБЩИЙ ЧАТ
     # =================================================================================
     else:
         general_prompt = f"""
@@ -576,7 +633,8 @@ def handle_chat():
         Отвечай на вопросы пользователя, помогай ему придерживаться плана.
         Будь поддерживающим и мотивирующим.
         """
-        messages = [{"role": "system", "content": general_prompt}] + chat_history
+        # ВАЖНО: Используем clean_history, чтобы не сломать OpenAI
+        messages = [{"role": "system", "content": general_prompt}] + clean_history
         reply = _call_openai(messages, temperature=DEFAULT_TEMPERATURE)
 
         chat_history.append({"role": "assistant", "content": reply})
