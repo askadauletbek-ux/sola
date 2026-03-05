@@ -581,7 +581,7 @@ def handle_chat():
         # =================================================================================
         # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ
         # =================================================================================
-        elif "Показатели" in classifier_text:
+    elif "Показатели" in classifier_text:
         current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
         if not current_ba:
             ai_msg = {
