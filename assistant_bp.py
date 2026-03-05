@@ -210,7 +210,13 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
         chat_history.append({"role": "assistant", "content": msg})
         session['chat_history'] = chat_history[-15:]
 
-        return {"success": False, "require_data": True, "full_text": msg}
+        return {
+            "success": False,
+            "require_data": True,
+            "full_text": msg,
+            "type": "require_data",
+            "actions": [{"label": "📸 Загрузить замеры", "route": "/scan"}]
+        }
 
     # --- ПОДСТАНОВКА ДЕФОЛТОВ (Если force_basic=True) ---
     is_estimation = False
@@ -386,7 +392,19 @@ def generate_diet_for_user(user_id, amplitude_instance=None, force_basic=False):
             except Exception as e:
                 print(f"Amplitude error: {e}")
 
-        return {"success": True, "justification": justification, "full_text": final_message_text}
+        return {
+            "success": True,
+            "justification": justification,
+            "full_text": final_message_text,
+            "type": "diet_generated",
+            "payload": {
+                "total_kcal": diet_plan.get('total_kcal'),
+                "protein": diet_plan.get('protein'),
+                "fat": diet_plan.get('fat'),
+                "carbs": diet_plan.get('carbs')
+            },
+            "actions": [{"label": "🍽 Смотреть меню", "route": "/meals"}]
+        }
 
     except Exception as e:
         logger.exception("Error in generate_diet_for_user")
@@ -439,12 +457,14 @@ def handle_chat():
 
         result = generate_diet_for_user(user_id, force_basic=force_basic)
 
-        if result.get("success"):
-            final_text = result.get("full_text")
-            return jsonify({"role": "ai", "content": final_text}), 200
-        elif result.get("require_data"):
-            # Возвращаем просьбу загрузить данные
-            return jsonify({"role": "ai", "content": result.get("full_text")}), 200
+        if result.get("success") or result.get("require_data"):
+            return jsonify({
+                "role": "ai",
+                "content": result.get("full_text"),
+                "type": result.get("type"),
+                "payload": result.get("payload"),
+                "actions": result.get("actions")
+            }), 200
         else:
             return jsonify({"role": "ai", "content": f"Ошибка генерации: {result.get('error')}"}), 200
 
