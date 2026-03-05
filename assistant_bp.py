@@ -567,7 +567,7 @@ def handle_chat():
     # СЦЕНАРИЙ 3: СКАНЕР ЕДЫ
     # =================================================================================
     elif "Сканер" in classifier_text:
-        reply_text = "Отличная идея! Давай запишем, что ты съел. Открываю сканер еды..."
+        reply_text = "Хорошо, надеюсь что то вкусное, главное полезное)"
         ai_msg = {
             "role": "ai",
             "content": reply_text,
@@ -578,10 +578,10 @@ def handle_chat():
         session['chat_history'] = chat_history
         return jsonify(ai_msg), 200
 
-    # =================================================================================
-    # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ
-    # =================================================================================
-    elif "Показатели" in classifier_text:
+        # =================================================================================
+        # СЦЕНАРИЙ 4: ПОКАЗАТЕЛИ
+        # =================================================================================
+        elif "Показатели" in classifier_text:
         current_ba = BodyAnalysis.query.filter_by(user_id=user_id).order_by(BodyAnalysis.timestamp.desc()).first()
         if not current_ba:
             ai_msg = {
@@ -595,16 +595,20 @@ def handle_chat():
             return jsonify(ai_msg), 200
 
         ba_sum = _format_body_summary(current_ba)
+        goal_weight = user_context['profile'].get('goal_weight')
+
         reply = _call_openai([
             {"role": "system",
-             "content": "Ты фитнес-аналитик Kilo. Твоя задача — анализировать прогресс пользователя. Подбадривай его!"},
-            {"role": "user", "content": f"Мои данные: {ba_sum}. Вопрос: {user_message}"}
+             "content": "Ты фитнес-аналитик Kilo. Отвечай МАКСИМАЛЬНО коротко (1-2 предложения). Только сухие факты о показателях пользователя. Без лишней воды. Если есть сдвиг к цели — подбодри."},
+            {"role": "user", "content": f"Мои данные: {ba_sum}. Моя цель: {goal_weight} кг. Вопрос: {user_message}"}
         ])
 
         payload = {
             "weight": current_ba.weight,
             "fat": current_ba.fat_mass,
-            "muscle": current_ba.muscle_mass
+            "muscle": current_ba.muscle_mass,
+            "start_weight": user_context['profile'].get('start_weight'),
+            "goal_weight": goal_weight
         }
 
         ai_msg = {
