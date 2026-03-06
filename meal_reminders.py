@@ -14,7 +14,7 @@ from models import User, UserSettings, MealReminderLog
 MEAL_SCHEDULE = {
     "breakfast": ("🍳 Завтрак", "08:00"),
     "lunch": ("🍲 Обед", "12:00"),
-    "dinner": ("🍝 Ужин", "18:00"),
+    "dinner": ("🍝 Ужин", "15:00"),
 }
 
 _scheduler = None
