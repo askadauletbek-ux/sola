@@ -119,8 +119,8 @@ def _tick():
             sent = _send_mobile_push(
                 fcm_token=fcm_token,
                 title=title,
-                body="Нажмите, чтобы зафиксировать его.",
-                data={"type": "meal_reminder", "meal_key": meal_key}
+                body="Давайте добавим прием пищи",
+                data={"type": "meal_reminder", "meal_key": meal_key, "route": "/scan" }
             )
 
         if sent:
