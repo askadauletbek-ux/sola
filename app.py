@@ -5655,13 +5655,18 @@ def admin_squads_distribution():
 def api_my_group():
     u = get_current_user()
 
-    # Ищем группу, где юзер - участник
-    member_record = GroupMember.query.filter_by(user_id=u.id).first()
-    if not member_record:
+    # Сначала проверяем, является ли пользователь тренером (владельцем) группы
+    g = None
+    if u.own_group:
+        g = u.own_group
+    else:
+        # Иначе ищем группу, где юзер - обычный участник
+        member_record = GroupMember.query.filter_by(user_id=u.id).first()
+        if member_record:
+            g = member_record.group
+
+    if not g:
         return jsonify({"ok": True, "group": None})
-
-    g = member_record.group
-
     # Собираем участников
     members_data = []
 
