@@ -467,6 +467,7 @@ class Training(db.Model):
     group = db.relationship('Group', backref=db.backref('group_trainings', lazy=True))
 
     __table_args__ = (db.UniqueConstraint('trainer_id', 'date', 'start_time', name='uq_trainer_date_start'),)
+
     # UI helper
     def to_dict(self, me_id=None):
         mine = (me_id is not None and self.trainer_id == me_id)
@@ -481,14 +482,18 @@ class Training(db.Model):
         if me_id:
             joined = any(s.user_id == me_id for s in self.signups)
 
+        # Проверяем, состоит ли пользователь в отряде (для командных тренировок)
+        is_group_member = False
+        if me_id and self.group_id and self.group:
+            is_group_member = any(m.user_id == me_id for m in self.group.members)
+
         seats_taken = len(self.signups)
         spots_left = max(0, (self.capacity or 0) - seats_taken)
 
-        can_open_link = False
-        if mine:
-            can_open_link = True
-        elif joined and (now >= link_visible_at) and not is_past:
-            can_open_link = True
+        # Отдаем ссылку, если это тренер, если человек записан (для публичных),
+        # или если он участник этого отряда.
+        # (Само время до старта теперь проверяет приложение на Dart)
+        has_access = mine or joined or is_group_member
 
         payload = {
             "id": self.id,
@@ -503,10 +508,12 @@ class Training(db.Model):
             "is_past": is_past,
             "spots_left": spots_left,
             "link_visible_at": link_visible_at.isoformat(timespec="minutes"),
-            "can_open_link": can_open_link
+            "can_open_link": has_access
         }
-        if can_open_link:
+
+        if has_access:
             payload["meeting_link"] = self.meeting_link
+
         return payload
 
 
