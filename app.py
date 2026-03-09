@@ -8011,6 +8011,69 @@ def report_message(message_id):
         db.session.commit()
         return jsonify({"ok": True, "message": "Жалоба отправлена"})
 
+
+@app.route('/api/groups/<int:group_id>/trainings/<int:training_id>', methods=['PUT', 'DELETE'])
+@login_required
+def api_manage_group_training(group_id, training_id):
+    user = get_current_user()
+    group = Group.query.get_or_404(group_id)
+
+    # Проверка, что юзер - тренер (владелец) этой группы
+    if group.trainer_id != user.id:
+        return jsonify({"ok": False, "error": "Not authorized"}), 403
+
+    t = Training.query.get_or_404(training_id)
+    if t.group_id != group.id:
+        return jsonify({"ok": False, "error": "Training not in this group"}), 400
+
+    if request.method == 'DELETE':
+        db.session.delete(t)
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    if request.method == 'PUT':
+        data = request.json
+        if 'title' in data: t.title = data['title']
+        if 'meeting_link' in data: t.meeting_link = data['meeting_link']
+        if 'date' in data:
+            try:
+                t.date = datetime.strptime(data['date'], '%Y-%m-%d').date()
+            except:
+                pass
+        if 'start_time' in data:
+            try:
+                t.start_time = datetime.strptime(data['start_time'], '%H:%M').time()
+            except:
+                pass
+        if 'end_time' in data:
+            try:
+                t.end_time = datetime.strptime(data['end_time'], '%H:%M').time()
+            except:
+                pass
+
+        db.session.commit()
+
+        # Отправка уведомлений всем участникам команды
+        from notification_service import send_user_notification
+        recipients_ids = [m.user_id for m in group.members if m.user_id != user.id]
+
+        notif_title = "🗓 Изменение в расписании"
+        notif_body = f"Тренировка «{t.title}» была изменена. Посмотрите календарь."
+
+        for uid in recipients_ids:
+            try:
+                send_user_notification(
+                    user_id=uid,
+                    title=notif_title,
+                    body=notif_body,
+                    type="info",
+                    data={"route": "/squad"}
+                )
+            except Exception as e:
+                print(f"Failed to send update training notification to user {uid}: {e}")
+
+        return jsonify({"ok": True})
+
 @app.route('/api/groups/<int:group_id>/weekly_stories', methods=['GET'])
 @login_required
 def get_weekly_stories(group_id):
