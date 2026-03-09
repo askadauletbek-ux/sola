@@ -7908,7 +7908,27 @@ def create_group_training(group_id):
         db.session.add(t)
         db.session.commit()
 
-        # Можно отправить уведомление (код уведомления опущен для краткости)
+        # Отправляем уведомление всем участникам команды
+        from notification_service import send_user_notification
+
+        # Собираем ID участников
+        recipients_ids = [m.user_id for m in group.members if m.user_id != user.id]
+
+        if recipients_ids:
+            notif_title = "🗓 Новая тренировка!"
+            notif_body = f"Тренер {user.name} назначил тренировку «{t.title}» на {dt.strftime('%d.%m')} в {st.strftime('%H:%M')}."
+
+            for uid in recipients_ids:
+                try:
+                    send_user_notification(
+                        user_id=uid,
+                        title=notif_title,
+                        body=notif_body,
+                        type="info",
+                        data={"route": "/squad"}
+                    )
+                except Exception as e:
+                    print(f"Failed to send training notification to user {uid}: {e}")
 
         return jsonify({"ok": True})
     except Exception as e:
