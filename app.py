@@ -8814,6 +8814,40 @@ def get_app_config():
         "maintenance_mode": False # На случай, если вы чините сервер
     })
 
+
+@app.route('/api/app/meals/by_date', methods=['GET'])
+@login_required
+def app_get_meals_by_date():
+    user = get_current_user()
+    date_str = request.args.get('date')
+
+    if not date_str:
+        return jsonify({"error": "Missing date parameter"}), 400
+
+    try:
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+
+    logs = MealLog.query.filter_by(user_id=user.id, date=target_date).order_by(MealLog.created_at).all()
+    total_calories = sum(m.calories for m in logs)
+
+    meal_data = [
+        {
+            'meal_type': m.meal_type,
+            'name': m.name or "Без названия",
+            'calories': m.calories,
+            'protein': m.protein,
+            'fat': m.fat,
+            'carbs': m.carbs
+        }
+        for m in logs
+    ]
+
+    return jsonify({
+        "meals": meal_data,
+        "total_calories": total_calories
+    }), 200
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
     port = int(os.environ.get("PORT", 5000))
