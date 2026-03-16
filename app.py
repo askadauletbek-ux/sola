@@ -119,7 +119,7 @@ limiter = Limiter(
 app.secret_key = os.getenv("SECRET_KEY", "supersecret")
 app.jinja_env.globals.update(getattr=getattr)
 # Config DB — задаём ДО init_app
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "sqlite:///35healthclubs.db")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 from extensions import db
@@ -533,7 +533,7 @@ def _notification_worker():
                 db.session.rollback()
 
 # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
-            if now.hour == 14 and now.minute == 00:
+            if now.hour == 15 and now.minute == 24:
                 try:
                     # Приводим к naive, чтобы БД корректно сравнила даты
                     seven_days_ago_naive = (now - timedelta(days=7)).replace(tzinfo=None)
