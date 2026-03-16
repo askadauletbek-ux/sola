@@ -540,24 +540,21 @@ def _notification_worker():
                             User.new_user == True,
                             User.new_user_date <= seven_days_ago
                         ).all()
-
-                        from lib.backend.notification_service import \
-                            send_push_notification  # <-- Импорт (проверьте путь)
-
                         for u in users_to_update:
                             u.new_user = False
 
                             # --- Отправка пуш-уведомления ---
-                            if u.fcm_token:
-                                try:
-                                    send_push_notification(
-                                        u.fcm_token,
-                                        "Ой, пробный период закончился! 🥺",
-                                        "Но ты можешь вернуть все фишки, купив подписку! В подарок получишь набор и сквады с полным контролем над своими характеристиками тела 💪",
-                                        {"route": "/purchase"}
-                                    )
-                                except Exception as e:
-                                    print(f"Error sending trial expiry push: {e}")
+                            try:
+                                from notification_service import send_user_notification
+                                send_user_notification(
+                                    user_id=u.id,
+                                    title="Ой, пробный период закончился! 🥺",
+                                    body="Но ты можешь вернуть все фишки, купив подписку! В подарок получишь набор и сквады с полным контролем над своими характеристиками тела 💪",
+                                    type='info',
+                                    data={"route": "/purchase"}
+                                )
+                            except Exception as e:
+                                print(f"Error sending trial expiry push: {e}")
                             # --------------------------------
 
                         db.session.commit()
