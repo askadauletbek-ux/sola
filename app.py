@@ -8884,10 +8884,9 @@ def app_get_meals_by_date():
     }), 200
 
 @app.route('/api/v1/ack_trial_popup', methods=['POST'])
-@jwt_required()
+@login_required
 def ack_trial_popup():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = get_current_user()
     if user:
         user.has_seen_trial_popup = True
         db.session.commit()
