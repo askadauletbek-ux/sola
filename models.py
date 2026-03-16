@@ -68,6 +68,7 @@ class User(db.Model):
 
     new_user = db.Column(db.Boolean, default=False, server_default=expression.false())
     new_user_date = db.Column(db.DateTime, nullable=True)
+    has_seen_trial_popup = db.Column(db.Boolean, default=False, server_default=expression.false())  # <-- Добавлено
 
     # Кэш стрика (пересчитывается на основе реальных записей MealLog)
     current_streak = db.Column(db.Integer, default=0, server_default='0', nullable=False)

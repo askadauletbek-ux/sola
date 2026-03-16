@@ -532,19 +532,37 @@ def _notification_worker():
             except Exception:
                 db.session.rollback()
 
-            # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
-            if now.hour == 0 and now.minute == 0:
-                try:
-                    seven_days_ago = now - timedelta(days=7)
-                    users_to_update = User.query.filter(
-                        User.new_user == True,
-                        User.new_user_date <= seven_days_ago
-                    ).all()
-                    for u in users_to_update:
-                        u.new_user = False
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
+                # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
+                if now.hour == 0 and now.minute == 0:
+                    try:
+                        seven_days_ago = now - timedelta(days=7)
+                        users_to_update = User.query.filter(
+                            User.new_user == True,
+                            User.new_user_date <= seven_days_ago
+                        ).all()
+
+                        from lib.backend.notification_service import \
+                            send_push_notification  # <-- Импорт (проверьте путь)
+
+                        for u in users_to_update:
+                            u.new_user = False
+
+                            # --- Отправка пуш-уведомления ---
+                            if u.fcm_token:
+                                try:
+                                    send_push_notification(
+                                        u.fcm_token,
+                                        "Ой, пробный период закончился! 🥺",
+                                        "Но ты можешь вернуть все фишки, купив подписку! В подарок получишь набор и сквады с полным контролем над своими характеристиками тела 💪",
+                                        {"route": "/purchase"}
+                                    )
+                                except Exception as e:
+                                    print(f"Error sending trial expiry push: {e}")
+                            # --------------------------------
+
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
 
             # 1) Напоминания за 1 час (как было)
             trainings = Training.query.filter(
@@ -1477,6 +1495,7 @@ def app_profile_data():
         "streak_nutrition": getattr(user, "streak_nutrition", 0),
         "streak_activity": getattr(user, "streak_activity", 0),
         "new_user": bool(getattr(user, "new_user", False)),
+        "has_seen_trial_popup": bool(getattr(user, "has_seen_trial_popup", False)), # <-- Добавлено
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
@@ -8866,6 +8885,17 @@ def app_get_meals_by_date():
         "meals": meal_data,
         "total_calories": total_calories
     }), 200
+
+@app.route('/api/v1/ack_trial_popup', methods=['POST'])
+@jwt_required()
+def ack_trial_popup():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if user:
+        user.has_seen_trial_popup = True
+        db.session.commit()
+    return jsonify({"status": "success", "message": "Trial popup acknowledged"})
+
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
     port = int(os.environ.get("PORT", 5000))
