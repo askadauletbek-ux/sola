@@ -532,6 +532,20 @@ def _notification_worker():
             except Exception:
                 db.session.rollback()
 
+            # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
+            if now.hour == 0 and now.minute == 0:
+                try:
+                    seven_days_ago = now - timedelta(days=7)
+                    users_to_update = User.query.filter(
+                        User.new_user == True,
+                        User.new_user_date <= seven_days_ago
+                    ).all()
+                    for u in users_to_update:
+                        u.new_user = False
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             # 1) Напоминания за 1 час (как было)
             trainings = Training.query.filter(
                 Training.date == target.date(),
@@ -1462,6 +1476,7 @@ def app_profile_data():
         "current_streak": getattr(user, "current_streak", 0),
         "streak_nutrition": getattr(user, "streak_nutrition", 0),
         "streak_activity": getattr(user, "streak_activity", 0),
+        "new_user": bool(getattr(user, "new_user", False)),
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
@@ -2433,6 +2448,7 @@ def api_me():
             "streak_nutrition": getattr(u, "streak_nutrition", 0),
             "streak_activity": getattr(u, "streak_activity", 0),
             "is_new_squad_member": bool(getattr(u, "is_new_squad_member", False)),
+            "new_user": bool(getattr(u, "new_user", False)),
             "delivery_status": delivery_status,
             # Имена группы и тренера
             "squad_name": u.own_group.name if u.own_group else (
@@ -2904,6 +2920,8 @@ def complete_onboarding_flow():
         # --- 2. СТАНДАРТНОЕ ЗАВЕРШЕНИЕ ---
         user.onboarding_v2_complete = True
         user.onboarding_complete = True
+        user.new_user = True
+        user.new_user_date = datetime.utcnow()
 
         # Сбрасываем ссылку на BodyAnalysis (так как мы его сейчас удалим)
         user.initial_body_analysis_id = None

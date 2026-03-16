@@ -66,6 +66,9 @@ class User(db.Model):
     is_new_squad_member = db.Column(db.Boolean, default=False, server_default=expression.false())  # <-- Добавлено
     # ------------------------------------
 
+    new_user = db.Column(db.Boolean, default=False, server_default=expression.false())
+    new_user_date = db.Column(db.DateTime, nullable=True)
+
     # Кэш стрика (пересчитывается на основе реальных записей MealLog)
     current_streak = db.Column(db.Integer, default=0, server_default='0', nullable=False)
     streak_nutrition = db.Column(db.Integer, default=0, server_default='0', nullable=False)
