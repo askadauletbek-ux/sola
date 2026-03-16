@@ -532,35 +532,41 @@ def _notification_worker():
             except Exception:
                 db.session.rollback()
 
-                # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
-            if now.hour == 13 and now.minute == 51:
+# ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
+            if now.hour == 14 and now.minute == 00:
                 try:
-                        # Приводим к naive, чтобы БД корректно сравнила даты
+                    # Приводим к naive, чтобы БД корректно сравнила даты
                     seven_days_ago_naive = (now - timedelta(days=7)).replace(tzinfo=None)
                     users_to_update = User.query.filter(
                          User.new_user == True,
                          User.new_user_date <= seven_days_ago_naive
                     ).all()
+
                     for u in users_to_update:
-                        u.new_user = False
+                        # 1. АТОМАРНОЕ ОБНОВЛЕНИЕ: Защита от гонки между 6 воркерами Gunicorn.
+                        # Пытаемся изменить флаг напрямую в базе, не дожидаясь общего коммита.
+                        updated_count = User.query.filter_by(id=u.id, new_user=True).update({'new_user': False})
+                        db.session.commit()
 
-                            # --- Отправка пуш-уведомления ---
-                        try:
-                            from notification_service import send_user_notification
-                            send_user_notification(
-                                    user_id=u.id,
-                                    title="Ой, пробный период закончился! 🥺",
-                                    body="Но ты можешь вернуть все фишки, купив подписку! В подарок получишь набор и сквады с полным контролем над своими характеристиками тела 💪",
-                                    type='info',
-                                    data={"route": "/purchase"}
-                            )
-                        except Exception as e:
-                            print(f"Error sending trial expiry push: {e}")
-                            # --------------------------------
+                        # 2. ОТПРАВКА ПУША:
+                        # Если updated_count > 0, значит именно этот воркер успел первым изменить базу.
+                        # Другие воркеры получат 0 и не отправят дублирующие пуши.
+                        if updated_count > 0:
+                            try:
+                                from notification_service import send_user_notification
+                                send_user_notification(
+                                        user_id=u.id,
+                                        title="Ой, пробный период закончился! 🥺",
+                                        body="Но ты можешь вернуть все фишки, купив подписку! В подарок получишь набор и сквады с полным контролем над своими характеристиками тела 💪",
+                                        type='info',
+                                        data={"route": "/purchase"}
+                                )
+                            except Exception as e:
+                                print(f"Error sending trial expiry push: {e}")
 
-                    db.session.commit()
-                except Exception:
+                except Exception as e:
                     db.session.rollback()
+                    print(f"DB Error in trial expiry block: {e}")
 
             # 1) Напоминания за 1 час (как было)
             trainings = Training.query.filter(
