@@ -285,7 +285,7 @@ def trigger_ai_feed_post(user, event_text):
             user_id=user.id,
             text=content,
             type='system',  # Специальный тип для выделения в UI
-            timestamp=datetime.now(UTC)
+            timestamp=datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
         )
         db.session.add(msg)
         db.session.commit()
@@ -533,12 +533,13 @@ def _notification_worker():
                 db.session.rollback()
 
                 # ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
-                if now.hour == 0 and now.minute == 0:
+                if now.hour == 12 and now.minute == 32:
                     try:
-                        seven_days_ago = now - timedelta(days=7)
+                        # Приводим к naive, чтобы БД корректно сравнила даты
+                        seven_days_ago_naive = (now - timedelta(days=7)).replace(tzinfo=None)
                         users_to_update = User.query.filter(
                             User.new_user == True,
-                            User.new_user_date <= seven_days_ago
+                            User.new_user_date <= seven_days_ago_naive
                         ).all()
                         for u in users_to_update:
                             u.new_user = False
@@ -939,7 +940,7 @@ def send_email_code(to_email, code):
         return False
 
 def calculate_age(born):
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
 
 # ------------------ TRAININGS API ------------------
@@ -999,7 +1000,7 @@ def list_trainings():
     requested_group_id = request.args.get('group_id')  # Получаем ID группы из запроса
 
     if not month:
-        today = date.today()
+        today = datetime.now(ZoneInfo("Asia/Almaty")).date()
         month = f"{today.year:04d}-{today.month:02d}"
     start, end = _month_bounds(month)
 
@@ -1338,7 +1339,7 @@ def app_profile_data():
                 coach_name = membership.group.trainer.name
 
     # Рассчитываем статус за последние 30 дней для календаря
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     start_30_days = today - timedelta(days=30)
 
     # 1. Еда: считаем количество приемов пищи, СУММУ калорий и БЖУ
@@ -2411,7 +2412,7 @@ def api_me():
     # 2. Если группа есть, считаем очки за текущую неделю
     if group_id:
         try:
-            today = date.today()
+            today = datetime.now(ZoneInfo("Asia/Almaty")).date()
             start_of_week = today - timedelta(days=today.weekday())
 
             # Получаем таблицу очков ВСЕХ участников группы за неделю
@@ -2519,7 +2520,7 @@ def api_register():
             analysis = BodyAnalysis(
                 user_id=user.id,
                 height=float(height),
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
             )
             db.session.add(analysis)
             db.session.commit()
@@ -2642,7 +2643,7 @@ def api_register_v2():
                 analysis = BodyAnalysis(
                     user_id=user.id,
                     height=float(height_val),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
                 )
                 db.session.add(analysis)
             except Exception as e:
@@ -2919,7 +2920,7 @@ def complete_onboarding_flow():
 
             # Б. Создаем запись в WeightLog (История веса)
             # Проверяем, нет ли уже записи за сегодня, чтобы не дублировать
-            today = date.today()
+            today = datetime.now(ZoneInfo("Asia/Almaty")).date()
             existing_log = WeightLog.query.filter_by(user_id=user.id, date=today).first()
 
             if not existing_log:
@@ -2937,7 +2938,7 @@ def complete_onboarding_flow():
         user.onboarding_v2_complete = True
         user.onboarding_complete = True
         user.new_user = True
-        user.new_user_date = datetime.utcnow()
+        user.new_user_date = datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
 
         # Сбрасываем ссылку на BodyAnalysis (так как мы его сейчас удалим)
         user.initial_body_analysis_id = None
@@ -3584,8 +3585,9 @@ def meals():
             verdict = request.form.get('verdict')
             analysis = request.form.get('analysis', '')
 
+            almaty_today = datetime.now(ZoneInfo("Asia/Almaty")).date()
             existing_meal = MealLog.query.filter_by(
-                user_id=user.id, date=date.today(), meal_type=meal_type
+                user_id=user.id, date=almaty_today, meal_type=meal_type
             ).first()
 
             if existing_meal:
@@ -3663,7 +3665,8 @@ def confirm_analysis():
 
                 # Ограничение удалено
                 # 3. Создаем запись
-                new_analysis = BodyAnalysis(user_id=user.id, timestamp=datetime.now(UTC))
+                new_analysis = BodyAnalysis(user_id=user.id,
+                                            timestamp=datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None))
 
                 # Заполняем поля безопасным методом (0 если нет данных)
                 def get_val(key, default=0):
@@ -3701,7 +3704,7 @@ def confirm_analysis():
                 if new_analysis.weight and new_analysis.weight > 0:
                     try:
                         # Используем сегодняшнюю дату
-                        w_today = date.today()
+                        w_today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
                         # Проверяем, есть ли уже запись за сегодня
                         existing_log = WeightLog.query.filter_by(user_id=user.id, date=w_today).first()
@@ -3726,8 +3729,7 @@ def confirm_analysis():
                 # Обновляем согласие
                 if 'face_consent' in api_data: user.face_consent = bool(api_data.get('face_consent'))
 
-                user.updated_at = datetime.now(UTC)
-
+                user.updated_at = datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
                 # Сохраняем
                 db.session.add(new_analysis)
                 db.session.flush()  # Получаем ID
@@ -3777,7 +3779,7 @@ def confirm_analysis():
                     if prev_w > 0:
                         change_pct = (curr_w - prev_w) / prev_w
                         if -0.015 <= change_pct <= -0.001:
-                            today = date.today()
+                            today = datetime.now(ZoneInfo("Asia/Almaty")).date()
                             start_of_week = today - timedelta(days=today.weekday())
                             existing_score = SquadScoreLog.query.filter(
                                 SquadScoreLog.user_id == user.id,
@@ -3887,7 +3889,7 @@ def update_weight_simple():
         return jsonify({"success": False, "error": "Некорректный формат веса"}), 400
 
     # 1. СОХРАНЯЕМ ТОЛЬКО В WEIGHT LOG (Дневник веса)
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
     # Ищем, есть ли уже запись за сегодня, чтобы обновить её
     todays_log = WeightLog.query.filter_by(user_id=user.id, date=today).first()
@@ -4134,7 +4136,7 @@ def diet_history():
 
     user_id = session.get('user_id')
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     week_ago = today - timedelta(days=7)
     month_ago = today - timedelta(days=30)
 
@@ -4177,7 +4179,7 @@ def add_meal():
 
     user_id = session.get('user_id')
     meal_type = request.form.get('meal_type')
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
     if not meal_type:
         flash("Произошла ошибка: не указан тип приёма пищи.", "error")
@@ -4494,7 +4496,7 @@ def admin_dashboard():
     total_trainers = User.query.filter_by(is_trainer=True).count()
 
     # Активность за сегодня
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     meals_today = db.session.query(func.count(func.distinct(MealLog.user_id))).filter(
         func.date(MealLog.created_at) == today).scalar() or 0
     activity_today = Activity.query.filter_by(date=today).count()
@@ -4549,7 +4551,7 @@ def admin_squads_control():
 
     # Статистика для каждого сквада
     squads_data = []
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     start_of_week = today - timedelta(days=today.weekday())
 
     for g in groups:
@@ -4739,7 +4741,7 @@ def admin_user_detail(user_id):
     diets = Diet.query.filter_by(user_id=user.id).order_by(Diet.date.desc()).all()
 
     # Determine current status for today
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     has_meal_today = any(m.date == today for m in meal_logs)
     has_activity_today = any(a.date == today for a in activities)
 
@@ -5253,7 +5255,7 @@ def group_detail(group_id):
         return redirect(url_for('profile'))
 
     # 1. Расчет дат (Текущая неделя Пн-Вс)
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     start_of_week = today - timedelta(days=today.weekday())
 
     # 2. Сбор очков за неделю (SquadScoreLog)
@@ -5705,7 +5707,7 @@ def api_my_group():
     members_data = []
 
     # Определяем начало текущей недели (понедельник)
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     start_of_week = today - timedelta(days=today.weekday())
 
     for m in g.members:
@@ -5837,7 +5839,7 @@ def admin_grant_subscription(user_id):
         flash("Не выбран период подписки.", "error")
         return redirect(url_for("admin_user_detail", user_id=user.id))
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     end_date = None
 
     # Определяем дату окончания на основе выбора
@@ -5893,7 +5895,7 @@ def manage_subscription(user_id):
 
     action = request.form.get('action')
     sub = Subscription.query.filter_by(user_id=user_id).first()
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
     try:
         if action == 'grant':
@@ -6024,7 +6026,7 @@ def manage_user_subscription():
         flash("У вас нет активной подписки для управления.", "warning")
         return redirect(url_for('profile'))
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
     try:
         if action == 'freeze':
@@ -6082,7 +6084,7 @@ def weekly_summary():
         return jsonify({"error": "Subscription required"}), 403
 
     user_id = session.get('user_id')
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     week_ago = today - timedelta(days=6)
 
     labels = [(week_ago + timedelta(days=i)).strftime("%a") for i in range(7)]
@@ -6214,7 +6216,7 @@ def deficit_history():
     else:
         return jsonify({"error": "Нет данных замеров"}), 404
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
 
     # 2. Запрашиваем данные
     meal_logs = MealLog.query.filter(
@@ -7022,7 +7024,7 @@ def admin_analytics_page():
         funnel_counts.append(count or 0)
 
     # 2. Динамика регистраций (за последние 14 дней)
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     dates_labels = []
     reg_values = []
 
@@ -7168,7 +7170,7 @@ def app_calendar_data():
     month_str = request.args.get('month')
 
     if not month_str:
-        today = date.today()
+        today = datetime.now(ZoneInfo("Asia/Almaty")).date()
         month_str = f"{today.year:04d}-{today.month:02d}"
 
     try:
@@ -7587,7 +7589,7 @@ def api_app_fcm_token():
     if request.method == "DELETE":
         try:
             user.fcm_device_token = None
-            user.updated_at = datetime.now(UTC)
+            user.updated_at = datetime.now(ZoneInfo("Asia/Almaty")).replace(tzinfo=None)
             db.session.commit()
             return jsonify({"ok": True}), 200
         except Exception as e:
@@ -8226,7 +8228,7 @@ def api_set_weight_goal():
         user.weight_goal = new_goal
 
         # 3. Создаем запись в WeightLog на сегодня, если её нет (чтобы график начинался красиво)
-        today = date.today()
+        today = datetime.now(ZoneInfo("Asia/Almaty")).date()
         if not WeightLog.query.filter_by(user_id=user.id, date=today).first():
             db.session.add(WeightLog(user_id=user.id, weight=current_weight, date=today))
 
