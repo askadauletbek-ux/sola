@@ -15,6 +15,9 @@ def _current_user():
 
 # --- ИСТОРИЯ ДЕФИЦИТА И ЗАМЕРОВ (НОВОЕ) ---
 
+from collections import defaultdict
+
+
 @user_bp.route('/api/history/deficit', methods=['GET'])
 def get_deficit_history():
     user = _current_user()
@@ -23,52 +26,65 @@ def get_deficit_history():
 
     history = []
     today = datetime.now().date()
+    start_date = today - timedelta(days=29)  # Последние 30 дней включая сегодня
 
-    # Рост из профиля (как запасной вариант, если в анализе его нет)
     profile_height = None
+    bmr = 1600
     if hasattr(user, 'profile') and user.profile:
         profile_height = user.profile.get('height')
+        bmr = user.profile.get('metabolism', 1600)
 
-    # Берем данные за последние 30 дней
+    # 1. Запрашиваем всю еду за 30 дней (1 запрос)
+    meals = MealLog.query.filter(
+        MealLog.user_id == user.id,
+        func.date(MealLog.created_at) >= start_date
+    ).all()
+
+    meals_by_date = defaultdict(int)
+    for m in meals:
+        meals_by_date[m.created_at.date()] += m.calories
+
+    # 2. Запрашиваем всю активность за 30 дней (1 запрос)
+    activities = Activity.query.filter(
+        Activity.user_id == user.id,
+        func.date(Activity.created_at) >= start_date
+    ).all()
+
+    activities_by_date = defaultdict(int)
+    for a in activities:
+        activities_by_date[
+            a.created_at.date()] += a.burned_kcal  # Убедитесь, что поле называется burned_kcal или active_kcal
+
+    # 3. Запрашиваем все замеры за 30 дней (1 запрос)
+    analyses = BodyAnalysis.query.filter(
+        BodyAnalysis.user_id == user.id,
+        func.date(BodyAnalysis.timestamp) >= start_date
+    ).order_by(BodyAnalysis.timestamp.desc()).all()
+
+    # Оставляем только самый последний замер для каждого дня
+    analysis_by_date = {}
+    for a in analyses:
+        date_key = a.timestamp.date()
+        if date_key not in analysis_by_date:
+            analysis_by_date[date_key] = a
+
+    # Собираем данные в цикле (БЕЗ запросов к БД)
     for i in range(30):
         current_date = today - timedelta(days=i)
 
-        # 1. Считаем съеденное (MealLog использует created_at)
-        logs = MealLog.query.filter(
-            MealLog.user_id == user.id,
-            func.date(MealLog.created_at) == current_date
-        ).all()
-        consumed = sum(l.calories for l in logs)
-
-        # 2. Считаем сожженное (Activity использует created_at)
-        bmr = user.profile.get('metabolism', 1600) if (hasattr(user, 'profile') and user.profile) else 1600
-
-        activities = Activity.query.filter(
-            Activity.user_id == user.id,
-            func.date(Activity.created_at) == current_date
-        ).all()
-        active_burned = sum(a.burned_kcal for a in activities)
+        consumed = meals_by_date.get(current_date, 0)
+        active_burned = activities_by_date.get(current_date, 0)
         total_burned = int(bmr + active_burned)
 
-        # 3. Ищем ЗАМЕР ВЕСА за этот день (BodyAnalysis использует timestamp!)
-        analysis = BodyAnalysis.query.filter(
-            BodyAnalysis.user_id == user.id,
-            func.date(BodyAnalysis.timestamp) == current_date
-        ).order_by(BodyAnalysis.timestamp.desc()).first()
-
-        weight_val = None
-        bmi_val = None
-        fat_val = None
+        analysis = analysis_by_date.get(current_date)
+        weight_val = bmi_val = fat_val = None
 
         if analysis:
-            # Берем поля строго из вашей модели BodyAnalysis
             weight_val = analysis.weight
             fat_val = analysis.fat_mass
             bmi_val = analysis.bmi
 
-            # Если BMI вдруг не записался (None или 0), пробуем рассчитать
             if not bmi_val and weight_val:
-                # Приоритет: рост из анализа -> рост из профиля
                 h_val = analysis.height or profile_height
                 if h_val:
                     try:
@@ -82,15 +98,12 @@ def get_deficit_history():
             "consumed": int(consumed),
             "total_burned": int(total_burned),
             "deficit": int(total_burned - consumed),
-
-            # Флаги и данные для фронтенда
-            "is_measurement_day": True if analysis else False,
+            "is_measurement_day": bool(analysis),
             "weight": weight_val,
             "bmi": bmi_val,
             "fat_mass": fat_val,
         }
 
-        # Добавляем в историю, если есть данные или это недавние дни
         if consumed > 0 or analysis or i < 3:
             history.append(day_data)
 
@@ -154,102 +167,24 @@ def delete_my_account():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     try:
-        from models import (
-            GroupMessage, MessageReaction, MessageReport, GroupTask, GroupMember,
-            SquadScoreLog, Training, TrainingSignup, SubscriptionApplication,
-            Subscription, Order, MealReminderLog, MealLog, Activity, Diet,
-            DietPreference, StagedDiet, BodyVisualization, BodyAnalysis, WeightLog,
-            UserSettings, EmailVerification, UploadedFile, Notification, AnalyticsEvent,
-            UserAchievement, SupportTicket, SupportMessage, ShoppingCart, ShoppingCartItem, AuditLog
-        )
-
-        # 0. Сбрасываем ключи-зависимости профиля
+        # Отвязываем файлы, чтобы не получить конфликт внешних ключей
         user.avatar_file_id = None
         if hasattr(user, 'full_body_photo_id'):
             user.full_body_photo_id = None
         user.initial_body_analysis_id = None
-        db.session.commit()
 
-        # 1. Группы (если владелец)
+        # Удаляем группу, если юзер — тренер-владелец
         if getattr(user, "own_group", None):
-            gid = user.own_group.id
-            msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(group_id=gid).all()]
-            if msg_ids:
-                MessageReaction.query.filter(MessageReaction.message_id.in_(msg_ids)).delete(synchronize_session=False)
-                MessageReport.query.filter(MessageReport.message_id.in_(msg_ids)).delete(synchronize_session=False)
-
-            GroupMessage.query.filter_by(group_id=gid).delete(synchronize_session=False)
-            GroupTask.query.filter_by(group_id=gid).delete(synchronize_session=False)
-            GroupMember.query.filter_by(group_id=gid).delete(synchronize_session=False)
-            SquadScoreLog.query.filter_by(group_id=gid).delete(synchronize_session=False)
-
-            group_training_ids = [t.id for t in Training.query.filter_by(group_id=gid).all()]
-            if group_training_ids:
-                TrainingSignup.query.filter(TrainingSignup.training_id.in_(group_training_ids)).delete(
-                    synchronize_session=False)
-                Training.query.filter(Training.id.in_(group_training_ids)).delete(synchronize_session=False)
             db.session.delete(user.own_group)
 
-        # 2. Подписки и заказы
-        SubscriptionApplication.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Subscription.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Order.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # 3. Базовые логи
-        MealReminderLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        MealLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Activity.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Diet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        DietPreference.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        StagedDiet.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        BodyVisualization.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        BodyAnalysis.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        WeightLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        # 4. Настройки, файлы, социальное
-        UserSettings.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        EmailVerification.query.filter_by(email=user.email).delete(synchronize_session=False)
-        UploadedFile.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        Notification.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        AnalyticsEvent.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        UserAchievement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        MessageReaction.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        user_msg_ids = [row[0] for row in db.session.query(GroupMessage.id).filter_by(user_id=user.id).all()]
-        if user_msg_ids:
-            MessageReaction.query.filter(MessageReaction.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
-            MessageReport.query.filter(MessageReport.message_id.in_(user_msg_ids)).delete(synchronize_session=False)
-
-        GroupMessage.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        GroupMember.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        SquadScoreLog.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        MessageReport.query.filter_by(reporter_id=user.id).delete(synchronize_session=False)
-
-        # 5. Тренировки, Поддержка, Магазин
-        TrainingSignup.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        trainer_tids = [row[0] for row in db.session.query(Training.id).filter_by(trainer_id=user.id).all()]
-        if trainer_tids:
-            TrainingSignup.query.filter(TrainingSignup.training_id.in_(trainer_tids)).delete(synchronize_session=False)
-            Training.query.filter(Training.id.in_(trainer_tids)).delete(synchronize_session=False)
-
-        user_ticket_ids = [t.id for t in SupportTicket.query.filter_by(user_id=user.id).all()]
-        if user_ticket_ids:
-            SupportMessage.query.filter(SupportMessage.ticket_id.in_(user_ticket_ids)).delete(synchronize_session=False)
-        SupportTicket.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-
-        cart_ids = [c.id for c in ShoppingCart.query.filter_by(user_id=user.id).all()]
-        if cart_ids:
-            ShoppingCartItem.query.filter(ShoppingCartItem.cart_id.in_(cart_ids)).delete(synchronize_session=False)
-        ShoppingCart.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        AuditLog.query.filter_by(actor_id=user.id).delete(synchronize_session=False)
-
-        # Финал
+        # Удаляем самого юзера. Все связанные таблицы (MealLog, Activity, BodyAnalysis и т.д.)
+        # будут удалены каскадно благодаря настройкам relationship в models.py
         db.session.delete(user)
         db.session.commit()
         session.clear()
 
-        return jsonify({"ok": True, "message": "Account deleted"})
+        return jsonify({"ok": True, "message": "Account deleted successfully"})
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Failed to delete account: {str(e)}"}), 500

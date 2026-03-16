@@ -89,21 +89,11 @@ class User(db.Model):
     def has_subscription(self):
         return self.is_trainer or (self.subscription and self.subscription.is_active)
 
-        # ----- Доступ к последнему анализу (динамические свойства) -----
+    # ----- Доступ к последнему анализу (динамические свойства) -----
     def _get_latest_analysis(self):
         if not hasattr(self, '_cached_latest_analysis'):
-            # Проверяем, загружена ли уже коллекция analyses через joinedload/subqueryload
-            if 'analyses' in self.__dict__:
-                analyses = self.analyses
-                if analyses:
-                        # Если загружена, сортируем в памяти и берем последнюю
-                    self._cached_latest_analysis = sorted(analyses, key=lambda x: x.timestamp, reverse=True)[0]
-                else:
-                    self._cached_latest_analysis = None
-            else:
-                    # Если коллекция не предзагружена, делаем единичный запрос (фоллбэк)
-                self._cached_latest_analysis = BodyAnalysis.query.filter_by(user_id=self.id) \
-                    .order_by(BodyAnalysis.timestamp.desc()).first()
+            self._cached_latest_analysis = BodyAnalysis.query.filter_by(user_id=self.id) \
+                .order_by(BodyAnalysis.timestamp.desc()).first()
         return self._cached_latest_analysis
 
     @property
