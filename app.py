@@ -1500,6 +1500,8 @@ def app_profile_data():
         "streak_activity": getattr(user, "streak_activity", 0),
         "new_user": bool(getattr(user, "new_user", False)),
         "has_seen_trial_popup": bool(getattr(user, "has_seen_trial_popup", False)), # <-- Добавлено
+        "has_seen_trial_ended_popup": bool(getattr(user, "has_seen_trial_ended_popup", False)),
+        "new_user_date": user.new_user_date.isoformat() if getattr(user, "new_user_date", None) else None,
         "calendar_history": calendar_history,
         "show_welcome_popup": show_popup,
         "step_goal": getattr(user, "step_goal", 10000),
@@ -8899,6 +8901,15 @@ def ack_trial_popup():
         user.has_seen_trial_popup = True
         db.session.commit()
     return jsonify({"status": "success", "message": "Trial popup acknowledged"})
+
+@app.route('/api/v1/ack_trial_ended_popup', methods=['POST'])
+@login_required
+def ack_trial_ended_popup():
+    user = get_current_user()
+    if user:
+        user.has_seen_trial_ended_popup = True
+        db.session.commit()
+    return jsonify({"status": "success", "message": "Trial ended popup acknowledged"})
 
 if __name__ == '__main__':
     # ВАЖНО: берем порт от Render, если его нет — ставим 5000 для локального запуска
