@@ -532,7 +532,6 @@ def _notification_worker():
             except Exception:
                 db.session.rollback()
 
-# ⛔️ Деактивируем trial-статус new_user (если прошло 7 дней)
             if now.hour == 15 and now.minute == 24:
                 try:
                     # Приводим к naive, чтобы БД корректно сравнила даты
@@ -8792,10 +8791,15 @@ def admin_send_magic_link(user_id):
 @admin_required
 def admin_users_notify():
     """Массовая отправка PUSH уведомлений из админки"""
-    data = request.get_json(silent=True) or {}
-    user_ids = data.get("user_ids", [])
-    title = data.get("title", "Уведомление")
-    body = data.get("body", "")
+    req_data = request.get_json(silent=True) or {}
+    user_ids = req_data.get("user_ids", [])
+    title = req_data.get("title", "Уведомление")
+    body = req_data.get("body", "")
+
+    # Достаем кастомные поля (HTML, картинки, цвета)
+    custom_data = req_data.get("data", {})
+    # Очищаем пустые значения, чтобы не слать мусор в FCM
+    custom_data = {k: v for k, v in custom_data.items() if v}
 
     if not user_ids or not body:
         return jsonify({"ok": False, "error": "Нет данных для отправки"}), 400
@@ -8803,8 +8807,8 @@ def admin_users_notify():
     sent = 0
     from notification_service import send_user_notification
     for uid in user_ids:
-        # Отправляем PUSH
-        if send_user_notification(user_id=uid, title=title, body=body, type='info'):
+        # Отправляем PUSH, передавая custom_data
+        if send_user_notification(user_id=uid, title=title, body=body, type='info', data=custom_data):
             sent += 1
 
     return jsonify({"ok": True, "sent": sent, "total": len(user_ids)})

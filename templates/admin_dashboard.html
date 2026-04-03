@@ -377,13 +377,39 @@
                 <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">Отправить PUSH уведомление</h3>
                 <p class="text-sm text-gray-500 mb-4">Выбрано пользователей: <span x-text="selected.size" class="font-bold"></span></p>
                 <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Заголовок</label>
-                        <input type="text" x-model="notifTitle" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Заголовок (ОС)</label>
+                            <input type="text" x-model="notifTitle" placeholder="Обычный текст" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Заголовок (HTML)</label>
+                            <input type="text" x-model="notifRichTitle" placeholder='<b>Жирный</b> или <font color="red">Цвет</font>' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Текст</label>
-                        <textarea x-model="notifBody" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Текст (ОС)</label>
+                            <textarea x-model="notifBody" rows="3" placeholder="Обычный текст (покажется если апп закрыт)" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Текст (HTML)</label>
+                            <textarea x-model="notifRichBody" rows="3" placeholder='Поддерживает <b>, <i>, <s>, <u>, <font color="#HEX">' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3 border-t pt-4 mt-2">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700">Big Picture (URL)</label>
+                            <input type="text" x-model="notifImage" placeholder="Большая картинка" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700">Large Icon (URL)</label>
+                            <input type="text" x-model="notifLargeIcon" placeholder="Иконка сбоку" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700">Фон уведомления (HEX)</label>
+                            <input type="text" x-model="notifBgColor" placeholder="#FF5733" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -415,6 +441,11 @@ function adminPage(){
     notifyModalOpen: false,
     notifTitle: '',
     notifBody: '',
+    notifRichTitle: '',
+    notifRichBody: '',
+    notifImage: '',
+    notifLargeIcon: '',
+    notifBgColor: '',
 
     isSelected(id){ return this.selected.has(id); },
     toggleSelect(id){ this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id); },
@@ -527,7 +558,14 @@ function adminPage(){
                 body: JSON.stringify({
                     user_ids: userIds,
                     title: this.notifTitle,
-                    body: this.notifBody
+                    body: this.notifBody,
+                    data: {
+                        rich_title: this.notifRichTitle,
+                        rich_body: this.notifRichBody,
+                        image_url: this.notifImage,
+                        large_icon: this.notifLargeIcon,
+                        bg_color: this.notifBgColor
+                    }
                 })
             });
             const data = await res.json();
@@ -536,6 +574,11 @@ function adminPage(){
                 this.notifyModalOpen = false;
                 this.notifTitle = '';
                 this.notifBody = '';
+                this.notifRichTitle = '';
+                this.notifRichBody = '';
+                this.notifImage = '';
+                this.notifLargeIcon = '';
+                this.notifBgColor = '';
                 this.clearSelection();
             } else {
                 alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
