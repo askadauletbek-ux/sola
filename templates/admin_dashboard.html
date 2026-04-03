@@ -372,43 +372,87 @@
     <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         <div class="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" @click="notifyModalOpen = false"></div>
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
-        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
             <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                 <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">Отправить PUSH уведомление</h3>
                 <p class="text-sm text-gray-500 mb-4">Выбрано пользователей: <span x-text="selected.size" class="font-bold"></span></p>
-                <div class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Заголовок (ОС)</label>
-                            <input type="text" x-model="notifTitle" placeholder="Обычный текст" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Заголовок (ОС)</label>
+                                <input type="text" x-model="notifTitle" placeholder="Обычный текст" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Заголовок (HTML)</label>
+                                <input type="text" x-model="notifRichTitle" placeholder='<b>Жирный</b> или <font color="red">Цвет</font>' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                            </div>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Заголовок (HTML)</label>
-                            <input type="text" x-model="notifRichTitle" placeholder='<b>Жирный</b> или <font color="red">Цвет</font>' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Текст (ОС)</label>
+                                <textarea x-model="notifBody" rows="3" placeholder="Обычный текст (покажется если апп закрыт)" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Текст (HTML)</label>
+                                <textarea x-model="notifRichBody" rows="3" placeholder='Поддерживает <b>, <i>, <s>, <u>, <font color="#HEX">' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3 border-t pt-4 mt-2">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700">Big Picture (URL)</label>
+                                <input type="text" x-model="notifImage" placeholder="Большая картинка" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700">Large Icon (URL)</label>
+                                <input type="text" x-model="notifLargeIcon" placeholder="Иконка сбоку" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700">Фон (HEX)</label>
+                                <input type="text" x-model="notifBgColor" placeholder="#FF5733" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                            </div>
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Текст (ОС)</label>
-                            <textarea x-model="notifBody" rows="3" placeholder="Обычный текст (покажется если апп закрыт)" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 text-indigo-600">Rich Текст (HTML)</label>
-                            <textarea x-model="notifRichBody" rows="3" placeholder='Поддерживает <b>, <i>, <s>, <u>, <font color="#HEX">' class="mt-1 block w-full border border-indigo-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-3 gap-3 border-t pt-4 mt-2">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-700">Big Picture (URL)</label>
-                            <input type="text" x-model="notifImage" placeholder="Большая картинка" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-700">Large Icon (URL)</label>
-                            <input type="text" x-model="notifLargeIcon" placeholder="Иконка сбоку" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-700">Фон уведомления (HEX)</label>
-                            <input type="text" x-model="notifBgColor" placeholder="#FF5733" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+
+                    <div class="bg-gray-100 rounded-xl p-6 flex flex-col items-center justify-center border border-gray-200">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Предпросмотр Android</div>
+
+                        <div class="w-full max-w-[320px] rounded-2xl shadow-md overflow-hidden transition-colors duration-300"
+                             :style="notifBgColor ? 'background-color: ' + notifBgColor : 'background-color: #ffffff'">
+
+                            <div class="px-4 py-2 flex items-center justify-between text-[11px]"
+                                 :class="notifBgColor ? 'text-white opacity-70' : 'text-gray-500'">
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-4 h-4 bg-indigo-500 rounded-sm flex items-center justify-center">
+                                        <span class="text-[8px] text-white font-bold">S</span>
+                                    </div>
+                                    <span>Sola • сейчас</span>
+                                </div>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </div>
+
+                            <div class="px-4 pb-3 flex gap-3">
+                                <div class="flex-1">
+                                    <div class="font-semibold text-[14px] leading-tight"
+                                         :class="notifBgColor ? 'text-white' : 'text-gray-900'"
+                                         x-html="notifRichTitle || notifTitle || 'Заголовок'"></div>
+                                    <div class="text-[13px] mt-1 leading-tight"
+                                         :class="notifBgColor ? 'text-white opacity-90' : 'text-gray-600'"
+                                         x-html="notifRichBody || notifBody || 'Текст уведомления'"></div>
+                                </div>
+                                <template x-if="notifLargeIcon">
+                                    <div class="w-12 h-12 flex-shrink-0">
+                                        <img :src="notifLargeIcon" class="w-full h-full object-cover rounded-lg">
+                                    </div>
+                                </template>
+                            </div>
+
+                            <template x-if="notifImage">
+                                <div class="w-full h-40 bg-gray-200">
+                                    <img :src="notifImage" class="w-full h-full object-cover">
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>
