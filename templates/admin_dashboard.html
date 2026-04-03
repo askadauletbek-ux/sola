@@ -542,10 +542,19 @@ function adminPage(){
     },
 
     async sendNotification() {
-        if (!this.notifTitle.trim() || !this.notifBody.trim()) {
-            alert('Заполните заголовок и текст');
+        // Проверяем, что заполнены ЛИБО обычные, ЛИБО Rich-тексты
+        const hasBasic = this.notifTitle.trim() && this.notifBody.trim();
+        const hasRich = this.notifRichTitle.trim() && this.notifRichBody.trim();
+
+        if (!hasBasic && !hasRich) {
+            alert('Заполните либо обычный Заголовок и Текст, либо их HTML-версии (Rich).');
             return;
         }
+
+        // Авто-заполнение пустых полей, чтобы FCM не ругался
+        if (!this.notifTitle.trim()) this.notifTitle = this.notifRichTitle.replace(/<[^>]*>?/gm, '');
+        if (!this.notifBody.trim()) this.notifBody = this.notifRichBody.replace(/<[^>]*>?/gm, '');
+
         const userIds = Array.from(this.selected);
         if (userIds.length === 0) return;
 
